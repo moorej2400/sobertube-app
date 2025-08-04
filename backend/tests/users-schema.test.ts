@@ -4,10 +4,14 @@
  * Following TDD methodology - these tests validate the database schema
  */
 
-import { getSupabaseClient } from '../src/services/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 describe('Users Table Schema', () => {
-  const supabaseClient = getSupabaseClient();
+  // Use service role client for tests to bypass RLS
+  const supabaseClient = createClient(
+    process.env['SUPABASE_URL'] || 'http://127.0.0.1:54321',
+    process.env['SUPABASE_SERVICE_ROLE_KEY'] || ''
+  );
 
   // Test data cleanup
   const testUsers: string[] = [];
@@ -238,18 +242,25 @@ describe('Users Table Schema', () => {
           'a'.repeat(20)  // Maximum length
         ];
 
-        for (const username of validUsernames) {
+        for (let i = 0; i < validUsernames.length; i++) {
+          const username = validUsernames[i];
+          const suffix = `${i}${Date.now().toString().slice(-4)}`; // Short suffix
+          const testUsername = username === 'a'.repeat(20) ? username : `${username}${suffix}`;
+          
+          // Ensure username doesn't exceed 20 characters
+          const finalUsername = testUsername.length > 20 ? testUsername.substring(0, 20) : testUsername;
+          
           const { data, error } = await supabaseClient
             .from('users')
             .insert({
-              email: `${username}${Date.now()}@example.com`,
-              username: `${username}${Date.now()}`
+              email: `test${i}${Date.now()}@example.com`,
+              username: finalUsername
             })
             .select()
             .single();
 
           expect(error).toBeNull();
-          expect(data.username).toBe(`${username}${Date.now()}`);
+          expect(data.username).toBe(finalUsername);
           
           if (data?.id) testUsers.push(data.id);
         }
@@ -297,11 +308,12 @@ describe('Users Table Schema', () => {
         const invalidPrivacyLevels = ['invalid', 'hidden', 'secret'];
 
         for (const privacyLevel of invalidPrivacyLevels) {
+          const timestamp = Date.now();
           const { error } = await supabaseClient
             .from('users')
             .insert({
-              email: `privacy${Date.now()}@example.com`,
-              username: `privacyuser${Date.now()}`,
+              email: `privacy${timestamp}@example.com`,
+              username: `puser${timestamp}`, // Shorter username to avoid length constraint
               privacy_level: privacyLevel
             });
 

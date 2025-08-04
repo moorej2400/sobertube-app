@@ -25,7 +25,7 @@ export class SupertestHelper {
   /**
    * Enhanced GET request with common options
    */
-  async get(path: string, options: TestRequestOptions = {}) {
+  get(path: string, options: TestRequestOptions = {}) {
     let req = request(this.app).get(path);
 
     if (options.headers) {
@@ -47,7 +47,7 @@ export class SupertestHelper {
   /**
    * Enhanced POST request with common options
    */
-  async post(path: string, data?: any, options: TestRequestOptions = {}) {
+  post(path: string, data?: any, options: TestRequestOptions = {}) {
     let req = request(this.app).post(path);
 
     if (data) {
@@ -71,9 +71,18 @@ export class SupertestHelper {
   }
 
   /**
+   * POST request with raw data (for testing invalid JSON, etc.)
+   */
+  postRaw(path: string, rawData: string) {
+    return request(this.app)
+      .post(path)
+      .send(rawData);
+  }
+
+  /**
    * Enhanced PUT request with common options
    */
-  async put(path: string, data?: any, options: TestRequestOptions = {}) {
+  put(path: string, data?: any, options: TestRequestOptions = {}) {
     let req = request(this.app).put(path);
 
     if (data) {
@@ -99,7 +108,7 @@ export class SupertestHelper {
   /**
    * Enhanced DELETE request with common options
    */
-  async delete(path: string, options: TestRequestOptions = {}) {
+  delete(path: string, options: TestRequestOptions = {}) {
     let req = request(this.app).delete(path);
 
     if (options.headers) {

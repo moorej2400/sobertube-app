@@ -13,6 +13,7 @@ import { RequestLoggerMiddleware, ErrorRequestLogger, PerformanceMonitor } from 
 import { performHealthCheck, performDetailedHealthCheck, updatePerformanceMetrics } from './services/healthCheck';
 import testRoutes from './routes/test';
 import authRoutes from './routes/auth';
+import profileRoutes from './routes/profile';
 import { logger } from './utils/logger';
 
 const app = express();
@@ -129,6 +130,7 @@ app.use('/test', testRoutes);
 
 // API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/profiles', profileRoutes);
 
 // Error request logging middleware (before error handlers)
 app.use(ErrorRequestLogger);
