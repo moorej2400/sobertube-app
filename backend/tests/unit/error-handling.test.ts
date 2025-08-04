@@ -4,7 +4,7 @@
  */
 
 import request from 'supertest';
-import { app, server } from '../src/index';
+import { app } from '../../src/app';
 import { 
   AppError, 
   ValidationError, 
@@ -13,12 +13,10 @@ import {
   AuthorizationError,
   NotFoundError,
   RateLimitError 
-} from '../src/utils/errors';
+} from '../../src/utils/errors';
 
 describe('Custom Error Classes', () => {
-  afterAll((done) => {
-    server.close(done);
-  });
+  // Tests don't need server cleanup in this context
 
   describe('AppError Base Class', () => {
     test('should create AppError with default values', () => {

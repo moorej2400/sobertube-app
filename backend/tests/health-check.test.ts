@@ -4,7 +4,7 @@
  */
 
 import request from 'supertest';
-import { app, server } from '../src/index';
+import { app } from '../src/app';
 import { getSupabaseClient } from '../src/services/supabase';
 
 describe('Enhanced Health Check Endpoint', () => {

@@ -3,14 +3,12 @@
  * Tests structured logging functionality, request/response logging, and log levels
  */
 
-import { logger } from '../src/utils/logger';
+import { logger } from '../../src/utils/logger';
 import request from 'supertest';
-import { app, server } from '../src/index';
+import { app } from '../../src/app';
 
 describe('Logging System', () => {
-  afterAll((done) => {
-    server.close(done);
-  });
+  // Tests don't need server cleanup in this context
 
   describe('Logger Configuration', () => {
     test('should create logger with correct configuration', () => {

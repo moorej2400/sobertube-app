@@ -4,7 +4,7 @@
  */
 
 import request from 'supertest';
-import { app, server } from '../src/index';
+import { app } from '../src/app';
 
 describe('Server Initialization', () => {
   afterAll((done) => {
