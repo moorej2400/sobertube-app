@@ -1,0 +1,52 @@
+{
+  "name": "sobertube-app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "pretest": "npm run test:setup",
+    "test:infrastructure": "jest tests/infrastructure.test.js",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --watchAll=false",
+    "test:setup": "echo 'Setting up test environment...'",
+    "test:db:setup": "echo 'Initializing test database...'",
+    "dev": "cross-env NODE_ENV=development concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:full": "docker-compose --profile full-stack up",
+    "build": "cross-env NODE_ENV=production npm run build:backend && npm run build:frontend",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "build:production": "npm run build",
+    "prebuild": "npm run clean",
+    "postbuild": "echo 'Build completed successfully'",
+    "clean": "rimraf backend/dist frontend/dist",
+    "start": "cross-env NODE_ENV=production concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm run preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moorej2400/sobertube-app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/moorej2400/sobertube-app/issues"
+  },
+  "homepage": "https://github.com/moorej2400/sobertube-app#readme",
+  "description": "",
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "cross-env": "^10.0.0",
+    "dotenv": "^17.2.1",
+    "jest": "^30.0.5",
+    "js-yaml": "^4.1.0",
+    "node-fetch": "^2.7.0",
+    "pg": "^8.16.3",
+    "rimraf": "^6.0.1",
+    "supabase": "^2.33.9"
+  }
+}

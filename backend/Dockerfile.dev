@@ -1,0 +1,28 @@
+# Development Dockerfile for SoberTube Backend
+# This image provides hot reload and development tools
+
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies for native modules and debugging tools
+RUN apk add --no-cache git python3 make g++
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies (include dev dependencies for development)
+RUN npm ci --include=dev
+
+# Copy TypeScript configuration
+COPY tsconfig.json ./
+
+# Copy source code
+COPY . .
+
+# Expose backend development port
+EXPOSE 8080
+
+# Start development server with hot reload and debugging enabled
+CMD ["npm", "run", "dev"]

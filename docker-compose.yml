@@ -1,0 +1,68 @@
+# SoberTube Development Environment
+# This file sets up the complete development stack for SoberTube
+# It includes both Supabase services and custom application services
+
+version: '3.8'
+
+services:
+  # Supabase local development is handled by the Supabase CLI
+  # This docker-compose.yml provides additional development services
+  # Run 'supabase start' to launch the Supabase stack
+  
+  # Development reverse proxy (optional - for custom routing)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend-dev
+    profiles:
+      - full-stack
+
+  # Frontend development server (will be added in Phase 3)
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_SUPABASE_URL=http://localhost:54321
+      - VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+    profiles:
+      - frontend
+      - full-stack
+
+  # Backend development server (will be added in Phase 2)
+  backend-dev:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - SUPABASE_URL=http://localhost:54321
+      - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+    profiles:
+      - backend
+      - full-stack
+
+volumes:
+  postgres_data:
+  supabase_data:
+
+# Usage Instructions:
+# 1. First run: supabase init && supabase start
+# 2. For frontend only: docker-compose --profile frontend up
+# 3. For backend only: docker-compose --profile backend up  
+# 4. For full stack: docker-compose --profile full-stack up
+# 5. View Supabase Studio at http://localhost:54323
