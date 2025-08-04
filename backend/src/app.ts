@@ -18,6 +18,7 @@ import postsRoutes from './routes/posts';
 import videosRoutes from './routes/videos';
 import feedRoutes from './routes/feed';
 import { likesRoutes } from './routes/likes';
+import { commentsRoutes } from './routes/comments';
 import { logger } from './utils/logger';
 
 const app = express();
@@ -139,6 +140,7 @@ app.use('/api/posts', postsRoutes);
 app.use('/api/videos', videosRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/likes', likesRoutes);
+app.use('/api/comments', commentsRoutes);
 
 // Error request logging middleware (before error handlers)
 app.use(ErrorRequestLogger);

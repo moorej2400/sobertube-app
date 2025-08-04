@@ -20,9 +20,15 @@ Implement the Social Interaction APIs (Likes, Comments, Follows) for the Timelin
   - **1.1.2**: Implement DELETE /api/likes endpoint (unlike video/post) - ✅ COMPLETE (integrated into toggle)
   - **1.1.3**: Implement GET /api/likes/status endpoint (check if user liked item) - ✅ COMPLETE
   - **1.1.4**: Add likes count update triggers in database - ✅ COMPLETE
+- **Phase 2.1**: Comments API Endpoints - ✅ COMPLETE
+  - **2.1.0**: Create comments controller with comprehensive error handling - ✅ COMPLETE
+  - **2.1.1**: Implement POST /api/comments endpoint (create comment) - ✅ COMPLETE
+  - **2.1.2**: Implement GET /api/comments endpoint (list comments with pagination) - ✅ COMPLETE
+  - **2.1.3**: Implement PUT /api/comments/:id endpoint (update comment) - ✅ COMPLETE
+  - **2.1.4**: Implement DELETE /api/comments/:id endpoint (delete comment) - ✅ COMPLETE
 
 **🎯 NEXT IMMEDIATE ACTIONS:**
-Ready to continue with **Phase 2.1.0**: Create comments controller with comprehensive error handling
+Ready to continue with **Phase 3.1.0**: Create follows controller with comprehensive error handling
 
 ## PHASE BREAKDOWN
 
@@ -43,11 +49,11 @@ Ready to continue with **Phase 2.1.0**: Create comments controller with comprehe
 
 ### PHASE 2: Comments System Implementation
 #### 2.1: Comments API Endpoints
-- [ ] **2.1.0**: Create comments controller with comprehensive error handling
-- [ ] **2.1.1**: Implement POST /api/comments endpoint (create comment)
-- [ ] **2.1.2**: Implement GET /api/comments endpoint (list comments with pagination)
-- [ ] **2.1.3**: Implement PUT /api/comments/:id endpoint (update comment)
-- [ ] **2.1.4**: Implement DELETE /api/comments/:id endpoint (delete comment)
+- [x] **2.1.0**: Create comments controller with comprehensive error handling - ✅ COMPLETE
+- [x] **2.1.1**: Implement POST /api/comments endpoint (create comment) - ✅ COMPLETE
+- [x] **2.1.2**: Implement GET /api/comments endpoint (list comments with pagination) - ✅ COMPLETE
+- [x] **2.1.3**: Implement PUT /api/comments/:id endpoint (update comment) - ✅ COMPLETE
+- [x] **2.1.4**: Implement DELETE /api/comments/:id endpoint (delete comment) - ✅ COMPLETE
 
 #### 2.2: Comments Advanced Features
 - [ ] **2.2.0**: Add comment threading support (parent-child relationships)
