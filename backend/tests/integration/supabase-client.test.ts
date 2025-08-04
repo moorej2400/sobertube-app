@@ -6,13 +6,13 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { 
   SupabaseClientConfig
-} from '../src/types/supabase';
+} from '../../src/types/supabase';
 
 // Import functions for Supabase client testing
 import { 
   createSupabaseClient, 
   getSupabaseClient
-} from '../src/services/supabase';
+} from '../../src/services/supabase';
 
 describe('Supabase Client Configuration', () => {
   describe('Client Initialization', () => {

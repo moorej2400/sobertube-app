@@ -3,9 +3,9 @@
  * Test suite for posts endpoints following TDD methodology
  */
 
-import { app } from '../src/app';
-import { createSupertestHelper } from './helpers/supertest.helper';
-import { getSupabaseClient } from '../src/services/supabase';
+import { app } from '../../src/app';
+import { createSupertestHelper } from '../helpers/supertest.helper';
+import { getSupabaseClient } from '../../src/services/supabase';
 
 describe('Posts API Endpoints', () => {
   const supertestHelper = createSupertestHelper(app);

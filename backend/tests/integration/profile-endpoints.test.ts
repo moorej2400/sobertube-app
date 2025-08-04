@@ -4,8 +4,8 @@
  * Following TDD methodology - tests written before implementation
  */
 
-import { app } from '../src/app';
-import { createSupertestHelper } from './helpers/supertest.helper';
+import { app } from '../../src/app';
+import { createSupertestHelper } from '../helpers/supertest.helper';
 import { createClient } from '@supabase/supabase-js';
 
 describe('Profile API Endpoints', () => {

@@ -29,6 +29,7 @@ module.exports = {
   
   // Test environment and setup
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  setupFiles: ['<rootDir>/tests/jest.env.js'],
   testTimeout: 30000,
   
   // Test execution configuration

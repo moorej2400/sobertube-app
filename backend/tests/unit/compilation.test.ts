@@ -8,12 +8,12 @@ import { existsSync } from 'fs';
 import path from 'path';
 
 describe('TypeScript Compilation', () => {
-  const distPath = path.join(__dirname, '../dist');
+  const distPath = path.join(__dirname, '../../dist');
 
   beforeAll(() => {
     // Clean any existing dist directory
     try {
-      execSync('rm -rf dist', { cwd: path.join(__dirname, '..') });
+      execSync('rm -rf dist', { cwd: path.join(__dirname, '../..') });
     } catch (error) {
       // Ignore error if dist doesn't exist
     }
@@ -22,7 +22,7 @@ describe('TypeScript Compilation', () => {
   test('should compile TypeScript without errors', () => {
     expect(() => {
       execSync('npm run build', { 
-        cwd: path.join(__dirname, '..'),
+        cwd: path.join(__dirname, '../..'),
         stdio: 'pipe' 
       });
     }).not.toThrow();

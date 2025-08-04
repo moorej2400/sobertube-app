@@ -71,10 +71,10 @@ export const authController = {
     }
 
     // Username validation
-    if (username.length < 3 || username.length > 50) {
+    if (username.length < 3 || username.length > 20) {
       res.status(400).json({
         success: false,
-        error: 'username must be between 3 and 50 characters'
+        error: 'username must be between 3 and 20 characters'
       });
       return;
     }
@@ -92,12 +92,42 @@ export const authController = {
     try {
       const supabaseClient = getSupabaseClient();
 
-      // Check for username uniqueness (custom check since Supabase Auth doesn't enforce this)
-      // Note: In a production app, this would be better handled with a database table and constraints
-      // For now, we'll simulate this check - in real implementation, we'd query users table
-      // This is a simplified check for the test - production would need proper database queries
-      
-      // Attempt to register user with Supabase
+      // Check for username uniqueness in the users table BEFORE Supabase Auth signup
+      const { data: existingUser, error: checkError } = await supabaseClient
+        .from('users')
+        .select('username')
+        .eq('username', username)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = not found (expected)
+        logger.error('Username uniqueness check failed', {
+          error: checkError.message,
+          username,
+          requestId: req.requestId
+        });
+
+        res.status(500).json({
+          success: false,
+          error: 'registration failed'
+        });
+        return;
+      }
+
+      // If user exists, return conflict error
+      if (existingUser) {
+        logger.warn('Registration attempted with duplicate username', {
+          username,
+          requestId: req.requestId
+        });
+
+        res.status(409).json({
+          success: false,
+          error: 'User with this username already exists'
+        });
+        return;
+      }
+
+      // Attempt to register user with Supabase Auth
       const { data, error } = await supabaseClient.auth.signUp({
         email,
         password,
@@ -150,6 +180,41 @@ export const authController = {
           requestId: req.requestId
         });
 
+        res.status(500).json({
+          success: false,
+          error: 'registration failed'
+        });
+        return;
+      }
+
+      // Insert user record into users table to enforce uniqueness and store profile data
+      const { error: insertError } = await supabaseClient
+        .from('users')
+        .insert({
+          id: data.user.id,
+          email: data.user.email,
+          username: username
+        });
+
+      if (insertError) {
+        logger.error('Failed to create user profile record', {
+          error: insertError.message,
+          userId: data.user.id,
+          email,
+          username,
+          requestId: req.requestId
+        });
+
+        // If it's a constraint violation (duplicate username or email), return 409
+        if (insertError.code === '23505' || insertError.message.includes('duplicate') || insertError.message.includes('unique')) {
+          res.status(409).json({
+            success: false,
+            error: 'User with this username already exists'
+          });
+          return;
+        }
+
+        // For other database errors, return 500
         res.status(500).json({
           success: false,
           error: 'registration failed'

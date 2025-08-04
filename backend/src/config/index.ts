@@ -5,8 +5,12 @@
 
 import dotenv from 'dotenv';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables based on NODE_ENV
+if (process.env['NODE_ENV'] === 'test') {
+  dotenv.config({ path: '.env.test', override: true });
+} else {
+  dotenv.config();
+}
 
 interface Config {
   // Server Configuration

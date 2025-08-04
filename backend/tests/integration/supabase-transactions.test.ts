@@ -3,7 +3,7 @@
  * Tests for database transaction utilities
  */
 
-import { DatabaseTransaction } from '../src/types/supabase';
+import { DatabaseTransaction } from '../../src/types/supabase';
 
 // Import functions that don't exist yet - should fail initially (TDD)
 import { 
@@ -11,7 +11,7 @@ import {
   commitTransaction,
   rollbackTransaction,
   executeInTransaction
-} from '../src/services/supabase';
+} from '../../src/services/supabase';
 
 describe('Supabase Transaction Support', () => {
   describe('Transaction Lifecycle', () => {

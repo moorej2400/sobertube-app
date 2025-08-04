@@ -4,9 +4,9 @@
  * Following TDD methodology - these tests should fail initially until implementation
  */
 
-import { app } from '../src/app';
-import { createSupertestHelper } from './helpers/supertest.helper';
-import { getSupabaseClient } from '../src/services/supabase';
+import { app } from '../../src/app';
+import { createSupertestHelper } from '../helpers/supertest.helper';
+import { getSupabaseClient } from '../../src/services/supabase';
 
 describe('Authentication Login/Logout', () => {
   const supertestHelper = createSupertestHelper(app);

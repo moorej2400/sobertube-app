@@ -18,6 +18,8 @@ services:
       - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend-dev
+    networks:
+      - sobertube_network
     profiles:
       - full-stack
 
@@ -32,8 +34,10 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_SUPABASE_URL=http://localhost:54321
+      - VITE_SUPABASE_URL=http://localhost:57891
       - VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+    networks:
+      - sobertube_network
     profiles:
       - frontend
       - full-stack
@@ -50,8 +54,10 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
-      - SUPABASE_URL=http://localhost:54321
+      - SUPABASE_URL=http://localhost:57891
       - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+    networks:
+      - sobertube_network
     profiles:
       - backend
       - full-stack
@@ -60,9 +66,13 @@ volumes:
   postgres_data:
   supabase_data:
 
+networks:
+  sobertube_network:
+    driver: bridge
+
 # Usage Instructions:
 # 1. First run: supabase init && supabase start
 # 2. For frontend only: docker-compose --profile frontend up
 # 3. For backend only: docker-compose --profile backend up  
 # 4. For full stack: docker-compose --profile full-stack up
-# 5. View Supabase Studio at http://localhost:54323
+# 5. View Supabase Studio at http://localhost:57893

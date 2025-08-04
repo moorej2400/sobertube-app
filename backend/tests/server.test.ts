@@ -7,14 +7,10 @@ import request from 'supertest';
 import { app } from '../src/app';
 
 describe('Server Initialization', () => {
-  afterAll((done) => {
-    server.close(done);
-  });
 
   describe('Basic Server Setup', () => {
     test('should start server successfully', async () => {
       expect(app).toBeDefined();
-      expect(server).toBeDefined();
     });
 
     test('should have health check endpoint', async () => {
@@ -27,7 +23,19 @@ describe('Server Initialization', () => {
         timestamp: expect.any(String),
         service: 'sobertube-backend',
         version: expect.any(String),
-        environment: 'test'
+        environment: 'test',
+        uptime: expect.any(Number),
+        dependencies: expect.objectContaining({
+          database: expect.objectContaining({
+            status: expect.stringMatching(/healthy|unhealthy/),
+            responseTime: expect.any(Number)
+          })
+        }),
+        system: expect.objectContaining({
+          memory: expect.any(Object),
+          cpu: expect.any(Object)
+        }),
+        errorRate: expect.any(Object)
       });
     });
 

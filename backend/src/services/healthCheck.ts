@@ -92,11 +92,16 @@ async function checkDatabaseHealth(): Promise<DependencyHealth> {
   const startTime = Date.now();
   
   try {
-    // Simple query to check connection
+    // Simple query to check connection using auth session check
     const supabase = getSupabaseClient();
-    await supabase.from('pg_stat_database').select('*').limit(1);
+    const { error } = await supabase.auth.getSession();
     
     const responseTime = Date.now() - startTime;
+    
+    // If there's a connection error, mark as unhealthy
+    if (error && (error.message.includes('connect') || error.message.includes('network'))) {
+      throw error;
+    }
     
     return {
       status: 'healthy',

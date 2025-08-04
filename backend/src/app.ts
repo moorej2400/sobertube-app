@@ -14,6 +14,8 @@ import { performHealthCheck, performDetailedHealthCheck, updatePerformanceMetric
 import testRoutes from './routes/test';
 import authRoutes from './routes/auth';
 import profileRoutes from './routes/profile';
+import postsRoutes from './routes/posts';
+import videosRoutes from './routes/videos';
 import { logger } from './utils/logger';
 
 const app = express();
@@ -131,6 +133,8 @@ app.use('/test', testRoutes);
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/profiles', profileRoutes);
+app.use('/api/posts', postsRoutes);
+app.use('/api/videos', videosRoutes);
 
 // Error request logging middleware (before error handlers)
 app.use(ErrorRequestLogger);

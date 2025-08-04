@@ -4,9 +4,9 @@
  * Following TDD methodology - these tests should fail initially
  */
 
-import { app } from '../src/app';
-import { createSupertestHelper } from './helpers/supertest.helper';
-import { getSupabaseClient } from '../src/services/supabase';
+import { app } from '../../src/app';
+import { createSupertestHelper } from '../helpers/supertest.helper';
+import { getSupabaseClient } from '../../src/services/supabase';
 
 describe('POST /api/auth/register', () => {
   const supertestHelper = createSupertestHelper(app);
@@ -23,7 +23,7 @@ describe('POST /api/auth/register', () => {
       const userData = {
         email: `test-${Date.now()}@example.com`,
         password: 'StrongPassword123!',
-        username: `testuser${Date.now()}`
+        username: `test${Date.now().toString().slice(-6)}`
       };
 
       const response = await supertestHelper.post('/api/auth/register', userData);
@@ -42,7 +42,7 @@ describe('POST /api/auth/register', () => {
       const userData = {
         email: `verify-${Date.now()}@example.com`,
         password: 'StrongPassword123!',
-        username: `verifyuser${Date.now()}`
+        username: `verify${Date.now().toString().slice(-6)}`
       };
 
       const response = await supertestHelper.post('/api/auth/register', userData);
@@ -119,7 +119,7 @@ describe('POST /api/auth/register', () => {
         const userData = {
           email: `test-${Date.now()}@example.com`,
           password,
-          username: `testuser${Date.now()}`
+          username: `test${Date.now().toString().slice(-6)}`
         };
 
         const response = await supertestHelper.post('/api/auth/register', userData);
@@ -148,7 +148,7 @@ describe('POST /api/auth/register', () => {
       const userData = {
         email: 'test@example.com',
         password: 'StrongPassword123!',
-        username: 'a'.repeat(51) // Too long (assuming 50 char limit)
+        username: 'a'.repeat(21) // Too long (database limit is 20)
       };
 
       const response = await supertestHelper.post('/api/auth/register', userData);
@@ -190,7 +190,7 @@ describe('POST /api/auth/register', () => {
       const firstUserData = {
         email,
         password: 'StrongPassword123!',
-        username: `firstuser${Date.now()}`
+        username: `first${Date.now().toString().slice(-6)}`
       };
 
       const firstResponse = await supertestHelper.post('/api/auth/register', firstUserData);
@@ -200,7 +200,7 @@ describe('POST /api/auth/register', () => {
       const secondUserData = {
         email, // Same email
         password: 'StrongPassword123!',
-        username: `seconduser${Date.now()}`
+        username: `second${Date.now().toString().slice(-6)}`
       };
 
       const secondResponse = await supertestHelper.post('/api/auth/register', secondUserData);
@@ -212,7 +212,7 @@ describe('POST /api/auth/register', () => {
     });
 
     it('should reject registration with duplicate username', async () => {
-      const username = `duplicateuser${Date.now()}`;
+      const username = `dup${Date.now().toString().slice(-6)}`;
       
       // First registration
       const firstUserData = {
@@ -280,8 +280,8 @@ describe('POST /api/auth/register', () => {
         username: 'ratelimituser'
       };
 
-      // Make multiple rapid requests
-      const promises = Array(10).fill(null).map(() => 
+      // Make multiple rapid requests (more than rate limit)
+      const promises = Array(60).fill(null).map(() => 
         supertestHelper.post('/api/auth/register', userData)
       );
 
@@ -345,7 +345,7 @@ describe('POST /api/auth/register', () => {
       const userData = {
         email: `format-${Date.now()}@example.com`,
         password: 'StrongPassword123!',
-        username: `formatuser${Date.now()}`
+        username: `format${Date.now().toString().slice(-6)}`
       };
 
       const response = await supertestHelper.post('/api/auth/register', userData);
@@ -361,7 +361,7 @@ describe('POST /api/auth/register', () => {
       const userData = {
         email: `security-${Date.now()}@example.com`,
         password: 'StrongPassword123!',
-        username: `securityuser${Date.now()}`
+        username: `sec${Date.now().toString().slice(-6)}`
       };
 
       const response = await supertestHelper.post('/api/auth/register', userData);

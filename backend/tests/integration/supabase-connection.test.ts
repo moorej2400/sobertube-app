@@ -6,13 +6,13 @@
 import { 
   DatabaseConnectionStatus, 
   DatabaseHealthCheck
-} from '../src/types/supabase';
+} from '../../src/types/supabase';
 
 // Import functions for connection testing
 import { 
   validateSupabaseConnection,
   getConnectionHealth
-} from '../src/services/supabase';
+} from '../../src/services/supabase';
 
 describe('Supabase Database Connection Management', () => {
   describe('Connection Validation', () => {

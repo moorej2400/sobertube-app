@@ -8,9 +8,6 @@ import { app } from '../src/app';
 import { getSupabaseClient } from '../src/services/supabase';
 
 describe('Enhanced Health Check Endpoint', () => {
-  afterAll((done) => {
-    server.close(done);
-  });
 
   describe('Basic Health Check', () => {
     test('should return healthy status with basic information', async () => {

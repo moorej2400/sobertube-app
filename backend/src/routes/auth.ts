@@ -6,14 +6,15 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth';
 import { requireAuth } from '../middleware/auth';
+import { registrationRateLimit, loginRateLimit } from '../middleware/rateLimiting';
 
 const router = Router();
 
 // POST /api/auth/register - User registration
-router.post('/register', authController.register);
+router.post('/register', registrationRateLimit, authController.register);
 
 // POST /api/auth/login - User login
-router.post('/login', authController.login);
+router.post('/login', loginRateLimit, authController.login);
 
 // POST /api/auth/logout - User logout
 router.post('/logout', authController.logout);

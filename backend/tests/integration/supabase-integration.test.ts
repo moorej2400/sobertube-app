@@ -3,7 +3,7 @@
  * Tests with real Supabase instance - no mocking
  */
 
-import { getSupabaseClient } from '../src/services/supabase';
+import { getSupabaseClient } from '../../src/services/supabase';
 
 describe('Supabase Integration Tests', () => {
   let supabaseClient: any;
