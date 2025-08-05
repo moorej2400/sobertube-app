@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth';
-import { limiter } from '../middleware/rateLimiter';
+import { generalRateLimit } from '../middleware/rateLimiting';
 import { commentsController } from '../controllers/comments';
 
 const router = Router();
@@ -43,7 +43,7 @@ const router = Router();
  * }
  */
 router.post('/', 
-  limiter, 
+  generalRateLimit, 
   authenticateToken, 
   commentsController.createComment
 );
@@ -95,7 +95,7 @@ router.post('/',
  * }
  */
 router.get('/', 
-  limiter, 
+  generalRateLimit, 
   commentsController.getComments
 );
 
@@ -132,7 +132,7 @@ router.get('/',
  * }
  */
 router.put('/:id', 
-  limiter, 
+  generalRateLimit, 
   authenticateToken, 
   commentsController.updateComment
 );
@@ -157,7 +157,7 @@ router.put('/:id',
  * }
  */
 router.delete('/:id', 
-  limiter, 
+  generalRateLimit, 
   authenticateToken, 
   commentsController.deleteComment
 );

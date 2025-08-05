@@ -3,7 +3,7 @@
  * Handles unified feed operations combining videos and posts
  */
 
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabase';
 import { logger } from '../utils/logger';
 import { asyncErrorHandler } from '../middleware/errorHandler';
@@ -361,7 +361,7 @@ export const feedController = {
    * Get Personalized Feed Handler (for authenticated users)
    * GET /api/feed/personalized
    */
-  getPersonalizedFeed: asyncErrorHandler(async (req: Request, res: Response) => {
+  getPersonalizedFeed: asyncErrorHandler(async (req: Request, res: Response): Promise<void> => {
     // Get authenticated user
     if (!req.user) {
       res.status(401).json({
@@ -371,23 +371,141 @@ export const feedController = {
       return;
     }
 
-    // For now, this is a placeholder for future personalization features
-    // In the future, this would consider:
-    // - Users that the current user follows
-    // - Content preferences
-    // - Engagement history
-    // - Recovery milestones and interests
+    const {
+      limit: limitParam = '10',
+      cursor,
+      content_type = 'all',
+      post_type,
+      sort = 'chronological'
+    } = req.query;
 
-    logger.info('Personalized feed requested (falling back to general feed)', {
-      userId: req.user.id,
-      requestId: req.requestId
-    });
+    // Parse and validate parameters
+    const limit = Math.min(50, Math.max(1, parseInt(limitParam as string, 10) || 10));
+    
+    if (isNaN(limit)) {
+      res.status(400).json({
+        success: false,
+        error: 'limit must be a positive integer'
+      });
+      return;
+    }
 
-    // For now, return the general feed
-    // In future implementations, this would add personalization logic
-    // Forward the request to the general feed with the same parameters
-    // In future implementations, this would add personalization logic
-    return feedController.getFeed(req, res, {} as NextFunction);
+    // Validate content_type
+    const validContentTypes = ['all', 'posts', 'videos'];
+    if (!validContentTypes.includes(content_type as string)) {
+      res.status(400).json({
+        success: false,
+        error: 'content_type must be one of: all, posts, videos'
+      });
+      return;
+    }
+
+    const supabaseClient = getSupabaseClient();
+
+    try {
+      logger.info('Generating personalized feed', {
+        userId: req.user.id,
+        contentType: content_type,
+        limit,
+        requestId: req.requestId
+      });
+
+      // Get users that the current user follows
+      const { data: followingData, error: followsError } = await supabaseClient
+        .from('follows')
+        .select('following_id')
+        .eq('follower_id', req.user.id);
+
+      if (followsError) {
+        logger.error('Failed to fetch user follows', {
+          error: followsError.message,
+          userId: req.user.id,
+          requestId: req.requestId
+        });
+        throw followsError;
+      }
+
+      const followingIds = followingData?.map(follow => follow.following_id) || [];
+      
+      // If user follows no one, fall back to popular content with user's own content mixed in
+      if (followingIds.length === 0) {
+        logger.info('User follows no one, using fallback algorithm', {
+          userId: req.user.id,
+          requestId: req.requestId
+        });
+        
+        await feedController.getPersonalizedFallbackFeed(req, res, limit, cursor as string, content_type as string, post_type as string);
+        return;
+      }
+
+      // Include user's own content in the feed
+      const userIdsForFeed = [...followingIds, req.user.id];
+
+      // Get personalized feed content from followed users + own content
+      const personalizedFeed = await feedController.getContentFromUsers(
+        userIdsForFeed,
+        limit,
+        cursor as string,
+        content_type as string,
+        post_type as string,
+        sort as string
+      );
+
+      // If personalized feed has insufficient content, mix with popular content
+      if (personalizedFeed.items.length < limit) {
+        const remainingLimit = limit - personalizedFeed.items.length;
+        logger.info('Mixing personalized content with popular content', {
+          personalizedCount: personalizedFeed.items.length,
+          remainingLimit,
+          userId: req.user.id,
+          requestId: req.requestId
+        });
+
+        const popularContent = await feedController.getPopularContent(
+          remainingLimit,
+          content_type as string,
+          post_type as string,
+          userIdsForFeed // Exclude content already in personalized feed
+        );
+
+        personalizedFeed.items = [...personalizedFeed.items, ...popularContent.items];
+        personalizedFeed.has_more = personalizedFeed.has_more || popularContent.has_more;
+      }
+
+      logger.info('Personalized feed generated successfully', {
+        userId: req.user.id,
+        itemCount: personalizedFeed.items.length,
+        followingCount: followingIds.length,
+        requestId: req.requestId
+      });
+
+      res.status(200).json({
+        success: true,
+        data: personalizedFeed.items,
+        pagination: {
+          limit,
+          next_cursor: personalizedFeed.next_cursor,
+          has_more: personalizedFeed.has_more
+        },
+        personalization: {
+          following_count: followingIds.length,
+          personalized_items: Math.min(personalizedFeed.items.length, limit),
+          algorithm: followingIds.length > 0 ? 'follows_based' : 'fallback'
+        }
+      });
+
+    } catch (error) {
+      logger.error('Personalized feed generation error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId: req.user.id,
+        requestId: req.requestId
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'failed to generate personalized feed'
+      });
+    }
   }),
 
   /**
@@ -478,5 +596,396 @@ export const feedController = {
         error: 'failed to fetch feed statistics'
       });
     }
-  })
+  }),
+
+  /**
+   * Helper function: Get content from specific users (for personalized feed)
+   */
+  async getContentFromUsers(
+    userIds: string[],
+    limit: number,
+    cursor?: string,
+    contentType: string = 'all',
+    postType?: string,
+    sort: string = 'chronological'
+  ) {
+    const supabaseClient = getSupabaseClient();
+    const items: FeedItem[] = [];
+
+    try {
+      // Build posts query if needed
+      if (contentType === 'all' || contentType === 'posts') {
+        let postsQuery = supabaseClient
+          .from('posts')
+          .select(`
+            id,
+            user_id,
+            content,
+            post_type,
+            image_url,
+            created_at,
+            updated_at,
+            likes_count,
+            comments_count,
+            user:users!posts_user_id_fkey (
+              id,
+              username,
+              display_name,
+              profile_picture_url
+            )
+          `)
+          .in('user_id', userIds)
+          .order('created_at', { ascending: false });
+
+        if (postType) {
+          postsQuery = postsQuery.eq('post_type', postType);
+        }
+
+        if (cursor && sort === 'chronological') {
+          postsQuery = postsQuery.lt('created_at', cursor);
+        }
+
+        const { data: posts, error: postsError } = await postsQuery.limit(Math.ceil(limit / 2));
+
+        if (postsError) throw postsError;
+
+        // Transform posts to feed items
+        posts?.forEach(post => {
+          items.push({
+            id: post.id,
+            type: 'post',
+            user_id: post.user_id,
+            created_at: post.created_at,
+            updated_at: post.updated_at,
+            user: {
+              id: post.user[0]?.id || post.user_id,
+              username: post.user[0]?.username || 'unknown',
+              display_name: post.user[0]?.display_name,
+              profile_picture_url: post.user[0]?.profile_picture_url
+            },
+            content: post.content,
+            post_type: post.post_type,
+            image_url: post.image_url,
+            likes_count: post.likes_count || 0,
+            comments_count: post.comments_count || 0
+          });
+        });
+      }
+
+      // Build videos query if needed
+      if (contentType === 'all' || contentType === 'videos') {
+        let videosQuery = supabaseClient
+          .from('videos')
+          .select(`
+            id,
+            user_id,
+            title,
+            description,
+            video_url,
+            thumbnail_url,
+            duration,
+            file_size,
+            format,
+            created_at,
+            updated_at,
+            likes_count,
+            comments_count,
+            views_count,
+            user:users!videos_user_id_fkey (
+              id,
+              username,
+              display_name,
+              profile_picture_url
+            )
+          `)
+          .in('user_id', userIds)
+          .eq('status', 'ready')
+          .order('created_at', { ascending: false });
+
+        if (cursor && sort === 'chronological') {
+          videosQuery = videosQuery.lt('created_at', cursor);
+        }
+
+        const { data: videos, error: videosError } = await videosQuery.limit(Math.ceil(limit / 2));
+
+        if (videosError) throw videosError;
+
+        // Transform videos to feed items
+        videos?.forEach(video => {
+          items.push({
+            id: video.id,
+            type: 'video',
+            user_id: video.user_id,
+            created_at: video.created_at,
+            updated_at: video.updated_at,
+            user: {
+              id: video.user[0]?.id || video.user_id,
+              username: video.user[0]?.username || 'unknown',
+              display_name: video.user[0]?.display_name,
+              profile_picture_url: video.user[0]?.profile_picture_url
+            },
+            title: video.title,
+            description: video.description,
+            video_url: video.video_url,
+            thumbnail_url: video.thumbnail_url,
+            duration: video.duration,
+            file_size: video.file_size,
+            format: video.format,
+            likes_count: video.likes_count || 0,
+            comments_count: video.comments_count || 0,
+            views_count: video.views_count || 0
+          });
+        });
+      }
+
+      // Sort combined results
+      items.sort((a, b) => {
+        if (sort === 'chronological') {
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }
+        // Add trending sort logic here in future
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      // Trim to limit and determine pagination
+      const limitedItems = items.slice(0, limit);
+      const hasMore = items.length > limit;
+      const nextCursor = hasMore && limitedItems.length > 0 
+        ? limitedItems[limitedItems.length - 1].created_at 
+        : null;
+
+      return {
+        items: limitedItems,
+        next_cursor: nextCursor,
+        has_more: hasMore
+      };
+
+    } catch (error) {
+      logger.error('Error fetching content from users', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userIds,
+        contentType
+      });
+      throw error;
+    }
+  },
+
+  /**
+   * Helper function: Get fallback feed for users with no follows
+   */
+  async getPersonalizedFallbackFeed(
+    req: Request,
+    res: Response,
+    limit: number,
+    cursor?: string,
+    contentType: string = 'all',
+    postType?: string
+  ) {
+    // Mix user's own content with popular content
+    const userContent = await feedController.getContentFromUsers(
+      [req.user!.id],
+      Math.ceil(limit * 0.3), // 30% user's own content
+      cursor,
+      contentType,
+      postType
+    );
+
+    const popularContent = await feedController.getPopularContent(
+      limit - userContent.items.length,
+      contentType,
+      postType,
+      [req.user!.id] // Exclude user's own content to avoid duplicates
+    );
+
+    const combinedItems = [...userContent.items, ...popularContent.items];
+    
+    // Sort combined results chronologically
+    combinedItems.sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    const limitedItems = combinedItems.slice(0, limit);
+    const hasMore = combinedItems.length > limit || userContent.has_more || popularContent.has_more;
+    const nextCursor = limitedItems.length > 0 
+      ? limitedItems[limitedItems.length - 1].created_at 
+      : null;
+
+    return res.status(200).json({
+      success: true,
+      data: limitedItems,
+      pagination: {
+        limit,
+        next_cursor: nextCursor,
+        has_more: hasMore
+      },
+      personalization: {
+        following_count: 0,
+        personalized_items: limitedItems.length,
+        algorithm: 'fallback_mixed'
+      }
+    });
+  },
+
+  /**
+   * Helper function: Get popular content (excluding specific users)
+   */
+  async getPopularContent(
+    limit: number,
+    contentType: string = 'all',
+    postType?: string,
+    excludeUserIds: string[] = []
+  ) {
+    const supabaseClient = getSupabaseClient();
+    const items: FeedItem[] = [];
+
+    try {
+      // Get popular posts (high likes/comments in last 7 days)
+      if (contentType === 'all' || contentType === 'posts') {
+        let postsQuery = supabaseClient
+          .from('posts')
+          .select(`
+            id,
+            user_id,
+            content,
+            post_type,
+            image_url,
+            created_at,
+            updated_at,
+            likes_count,
+            comments_count,
+            user:users!posts_user_id_fkey (
+              id,
+              username,
+              display_name,
+              profile_picture_url
+            )
+          `)
+          .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+          .order('likes_count', { ascending: false })
+          .order('comments_count', { ascending: false });
+
+        if (postType) {
+          postsQuery = postsQuery.eq('post_type', postType);
+        }
+
+        if (excludeUserIds.length > 0) {
+          postsQuery = postsQuery.not('user_id', 'in', `(${excludeUserIds.join(',')})`);
+        }
+
+        const { data: posts, error: postsError } = await postsQuery.limit(Math.ceil(limit / 2));
+
+        if (postsError) throw postsError;
+
+        posts?.forEach(post => {
+          items.push({
+            id: post.id,
+            type: 'post',
+            user_id: post.user_id,
+            created_at: post.created_at,
+            updated_at: post.updated_at,
+            user: {
+              id: post.user[0]?.id || post.user_id,
+              username: post.user[0]?.username || 'unknown',
+              display_name: post.user[0]?.display_name,
+              profile_picture_url: post.user[0]?.profile_picture_url
+            },
+            content: post.content,
+            post_type: post.post_type,
+            image_url: post.image_url,
+            likes_count: post.likes_count || 0,
+            comments_count: post.comments_count || 0
+          });
+        });
+      }
+
+      // Get popular videos (high likes/views in last 7 days)
+      if (contentType === 'all' || contentType === 'videos') {
+        let videosQuery = supabaseClient
+          .from('videos')
+          .select(`
+            id,
+            user_id,
+            title,
+            description,
+            video_url,
+            thumbnail_url,
+            duration,
+            file_size,
+            format,
+            created_at,
+            updated_at,
+            likes_count,
+            comments_count,
+            views_count,
+            user:users!videos_user_id_fkey (
+              id,
+              username,
+              display_name,
+              profile_picture_url
+            )
+          `)
+          .eq('status', 'ready')
+          .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+          .order('views_count', { ascending: false })
+          .order('likes_count', { ascending: false });
+
+        if (excludeUserIds.length > 0) {
+          videosQuery = videosQuery.not('user_id', 'in', `(${excludeUserIds.join(',')})`);
+        }
+
+        const { data: videos, error: videosError } = await videosQuery.limit(Math.ceil(limit / 2));
+
+        if (videosError) throw videosError;
+
+        videos?.forEach(video => {
+          items.push({
+            id: video.id,
+            type: 'video',
+            user_id: video.user_id,
+            created_at: video.created_at,
+            updated_at: video.updated_at,
+            user: {
+              id: video.user[0]?.id || video.user_id,
+              username: video.user[0]?.username || 'unknown',
+              display_name: video.user[0]?.display_name,
+              profile_picture_url: video.user[0]?.profile_picture_url
+            },
+            title: video.title,
+            description: video.description,
+            video_url: video.video_url,
+            thumbnail_url: video.thumbnail_url,
+            duration: video.duration,
+            file_size: video.file_size,
+            format: video.format,
+            likes_count: video.likes_count || 0,
+            comments_count: video.comments_count || 0,
+            views_count: video.views_count || 0
+          });
+        });
+      }
+
+      // Sort by engagement score (likes + comments + views)
+      items.sort((a, b) => {
+        const scoreA = (a.likes_count || 0) + (a.comments_count || 0) + (a.views_count || 0);
+        const scoreB = (b.likes_count || 0) + (b.comments_count || 0) + (b.views_count || 0);
+        return scoreB - scoreA;
+      });
+
+      const limitedItems = items.slice(0, limit);
+      const hasMore = items.length > limit;
+
+      return {
+        items: limitedItems,
+        has_more: hasMore
+      };
+
+    } catch (error) {
+      logger.error('Error fetching popular content', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        contentType,
+        excludeUserIds
+      });
+      throw error;
+    }
+  }
 };

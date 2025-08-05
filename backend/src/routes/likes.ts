@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth';
-import { limiter } from '../middleware/rateLimiter';
+import { generalRateLimit } from '../middleware/rateLimiting';
 import { likesController } from '../controllers/likes';
 
 const router = Router();
@@ -31,7 +31,7 @@ const router = Router();
  * }
  */
 router.post('/', 
-  limiter, 
+  generalRateLimit, 
   authenticateToken, 
   likesController.toggleLike
 );
@@ -57,7 +57,7 @@ router.post('/',
  * }
  */
 router.get('/status', 
-  limiter, 
+  generalRateLimit, 
   authenticateToken, 
   likesController.getLikeStatus
 );
@@ -95,7 +95,7 @@ router.get('/status',
  * }
  */
 router.get('/user', 
-  limiter, 
+  generalRateLimit, 
   authenticateToken, 
   likesController.getUserLikedContent
 );

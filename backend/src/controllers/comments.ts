@@ -326,7 +326,7 @@ export const commentsController = {
       const hasMore = (data?.length || 0) > limit;
       const commentsToReturn = data ? data.slice(0, limit) : [];
 
-      const comments: CommentResponse[] = commentsToReturn.map(comment => ({
+      const comments: CommentResponse[] = commentsToReturn.map((comment: any) => ({
         id: comment.id,
         user_id: comment.user_id,
         username: comment.username,

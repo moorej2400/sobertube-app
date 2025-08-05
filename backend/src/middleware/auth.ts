@@ -323,3 +323,8 @@ export const requirePermission = (requiredPermissions: string[]) => {
     next();
   };
 };
+
+/**
+ * Alias for requireAuth to maintain compatibility with existing routes
+ */
+export const authenticateToken = requireAuth;
