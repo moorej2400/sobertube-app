@@ -5,6 +5,8 @@
 
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HTTPServer } from 'http';
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
 import { logger } from '../utils/logger';
 import {
   ServerToClientEvents,
@@ -12,20 +14,54 @@ import {
   InterServerEvents,
   SocketData,
   SocketAuthPayload,
-  SocketErrorPayload
+  SocketErrorPayload,
+  ConnectionInfo
 } from './types';
+
+import { webSocketEventsService } from '../services/websocketEvents';
 import { ConnectionManager } from './connectionManager';
-import { WebSocketAuthMiddleware } from './authMiddleware';
+import { WebSocketClusterManager } from './clusterManager';
+import { presenceManager } from '../services/presenceManager';
 
 export class WebSocketServer {
   private io: SocketIOServer<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+  
+  // Connection management
   private connectionManager: ConnectionManager;
-  private authMiddleware: WebSocketAuthMiddleware;
+  
+  // Cluster management (optional for horizontal scaling)
+  private clusterManager?: WebSocketClusterManager;
+  
+  // User tracking maps  
+  private connectedUsers: Map<string, any> = new Map(); // socketId -> ConnectionInfo
+  private userSockets: Map<string, Set<string>> = new Map(); // userId -> Set<socketId>
+  
+  // Rate limiting
+  private rateLimits: Map<string, any> = new Map();
+  private rateLimitConfig = {
+    windowMs: 60000, // 1 minute
+    maxRequests: 100, // 100 requests per minute
+    message: 'Rate limit exceeded. Please slow down.'
+  };
 
-  constructor(httpServer: HTTPServer) {
-    // Initialize components
+  constructor(httpServer: HTTPServer, enableClustering = false) {
+    // Initialize connection manager
     this.connectionManager = new ConnectionManager();
-    this.authMiddleware = new WebSocketAuthMiddleware();
+    
+    // Initialize cluster manager if clustering is enabled
+    if (enableClustering && process.env['REDIS_URL']) {
+      this.clusterManager = new WebSocketClusterManager({
+        redisUrl: process.env['REDIS_URL'],
+        serverId: process.env['SERVER_ID'] || `server-${process.pid}`,
+        serverPort: parseInt(process.env['PORT'] || '3001')
+      });
+      
+      logger.info('WebSocket clustering enabled', {
+        component: 'WebSocketServer',
+        serverId: this.clusterManager['config'].serverId,
+        redisUrl: process.env['REDIS_URL']
+      });
+    }
     
     this.io = new SocketIOServer(httpServer, {
       cors: {
@@ -42,6 +78,17 @@ export class WebSocketServer {
     
     this.setupMiddleware();
     this.setupEventHandlers();
+    
+    // Initialize WebSocket events service
+    webSocketEventsService.setWebSocketServer(this);
+    
+    // Setup clustering if enabled
+    if (this.clusterManager) {
+      this.setupClustering();
+    }
+    
+    // Initialize presence manager
+    presenceManager.setConnectionManager(this.connectionManager);
     
     logger.info('WebSocket server initialized', {
       component: 'WebSocketServer',
@@ -173,7 +220,15 @@ export class WebSocketServer {
 
     // Handle authenticated users
     if (socket.isAuthenticated && socket.userId && socket.username) {
-      this.handleAuthenticatedConnection(socket);
+      // Note: Not awaiting to avoid blocking connection setup
+      this.handleAuthenticatedConnection(socket).catch(error => {
+        logger.error('Failed to handle authenticated connection', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId
+        });
+      });
     }
 
     // Setup connection event handlers
@@ -192,7 +247,7 @@ export class WebSocketServer {
   /**
    * Handle authenticated user connection
    */
-  private handleAuthenticatedConnection(socket: any): void {
+  private async handleAuthenticatedConnection(socket: any): Promise<void> {
     const userId = socket.userId!;
     const username = socket.username!;
     
@@ -213,6 +268,9 @@ export class WebSocketServer {
     }
     this.userSockets.get(userId)!.add(socket.id);
     
+    // Add connection to connection manager
+    this.connectionManager.addConnection(socket.id, userId, username);
+    
     // Join user's personal room
     socket.join(`user:${userId}`);
     socket.data.roomsJoined.push(`user:${userId}`);
@@ -220,8 +278,8 @@ export class WebSocketServer {
     // Emit authentication success
     socket.emit('authenticated', { userId, username });
     
-    // Broadcast user online status to followers (implement later)
-    this.broadcastUserPresence(userId, username, 'online');
+    // Broadcast user online status to followers
+    await this.broadcastUserPresence(userId, username, 'online');
     
     logger.info('Authenticated user connected', {
       component: 'WebSocketServer',
@@ -230,6 +288,9 @@ export class WebSocketServer {
       username,
       totalUserSockets: this.userSockets.get(userId)!.size
     });
+    
+    // Update cluster connection count
+    this.updateClusterConnectionCount();
   }
 
   /**
@@ -257,7 +318,15 @@ export class WebSocketServer {
         socket.data.username = decoded.username;
         socket.data.isAuthenticated = true;
         
-        this.handleAuthenticatedConnection(socket);
+        // Note: Not awaiting to avoid blocking authentication response
+        this.handleAuthenticatedConnection(socket).catch(error => {
+          logger.error('Failed to handle authenticated connection after manual auth', {
+            component: 'WebSocketServer',
+            error: error instanceof Error ? error.message : 'Unknown error',
+            socketId: socket.id,
+            userId: socket.userId
+          });
+        });
         
       } catch (error) {
         logger.warn('Authentication failed', {
@@ -274,12 +343,392 @@ export class WebSocketServer {
 
     // Handle disconnection
     socket.on('disconnect', (reason: string) => {
-      this.handleDisconnection(socket, reason);
+      // Note: Not awaiting to avoid blocking disconnect event
+      this.handleDisconnection(socket, reason).catch(error => {
+        logger.error('Failed to handle disconnection', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId
+        });
+      });
     });
 
     // Handle manual disconnect
     socket.on('disconnect_user', () => {
       socket.disconnect(true);
+    });
+
+    // Handle content room management
+    socket.on('join_content', (payload: { contentType: 'video' | 'post'; contentId: string }) => {
+      if (!socket.isAuthenticated) {
+        socket.emit('error', {
+          code: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication required to join content rooms'
+        });
+        return;
+      }
+
+      const { contentType, contentId } = payload;
+      
+      // Validate content type
+      if (!['video', 'post'].includes(contentType)) {
+        socket.emit('error', {
+          code: 'INVALID_CONTENT_TYPE',
+          message: 'Content type must be either "video" or "post"'
+        });
+        return;
+      }
+
+      // Validate content ID format (UUID)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(contentId)) {
+        socket.emit('error', {
+          code: 'INVALID_CONTENT_ID',
+          message: 'Content ID must be a valid UUID'
+        });
+        return;
+      }
+
+      const roomName = `content:${contentType}:${contentId}`;
+      
+      // Join the room
+      socket.join(roomName);
+      socket.data.roomsJoined.push(roomName);
+
+      logger.info('User joined content room', {
+        component: 'WebSocketServer',
+        socketId: socket.id,
+        userId: socket.userId,
+        username: socket.username,
+        contentType,
+        contentId,
+        roomName
+      });
+    });
+
+    socket.on('leave_content', (payload: { contentType: 'video' | 'post'; contentId: string }) => {
+      if (!socket.isAuthenticated) {
+        return; // Silently ignore if not authenticated
+      }
+
+      const { contentType, contentId } = payload;
+      const roomName = `content:${contentType}:${contentId}`;
+      
+      // Leave the room
+      socket.leave(roomName);
+      
+      // Remove from tracked rooms
+      const roomIndex = socket.data.roomsJoined.indexOf(roomName);
+      if (roomIndex > -1) {
+        socket.data.roomsJoined.splice(roomIndex, 1);
+      }
+
+      logger.info('User left content room', {
+        component: 'WebSocketServer',
+        socketId: socket.id,
+        userId: socket.userId,
+        username: socket.username,
+        contentType,
+        contentId,
+        roomName
+      });
+    });
+
+    // Handle feed interactions
+    socket.on('request_instant_refresh', async () => {
+      if (!socket.isAuthenticated || !socket.userId) {
+        socket.emit('error', {
+          code: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication required for feed refresh'
+        });
+        return;
+      }
+
+      try {
+        const { feedUpdatesService } = await import('../services/feedUpdates');
+        
+        // Generate personalized feed updates
+        const personalizedUpdates = await feedUpdatesService.generatePersonalizedFeedUpdates(
+          socket.userId, 
+          10
+        );
+
+        // Send instant refresh with personalized content
+        for (const update of personalizedUpdates) {
+          socket.emit('feed:instant_refresh', update);
+        }
+
+        logger.info('Instant feed refresh processed for user', {
+          component: 'WebSocketServer',
+          socketId: socket.id,
+          userId: socket.userId,
+          updateCount: personalizedUpdates.length
+        });
+
+      } catch (error) {
+        logger.error('Failed to process instant feed refresh', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId
+        });
+
+        socket.emit('error', {
+          code: 'FEED_REFRESH_FAILED',
+          message: 'Failed to refresh feed'
+        });
+      }
+    });
+
+    socket.on('request_personalized_feed', async (payload: { preferences?: string[] }) => {
+      if (!socket.isAuthenticated || !socket.userId) {
+        socket.emit('error', {
+          code: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication required for personalized feed'
+        });
+        return;
+      }
+
+      try {
+        const { feedUpdatesService } = await import('../services/feedUpdates');
+        
+        // Generate personalized feed updates
+        const personalizedUpdates = await feedUpdatesService.generatePersonalizedFeedUpdates(
+          socket.userId, 
+          20 // More items for personalized feed request
+        );
+
+        // Send personalized updates
+        for (const update of personalizedUpdates) {
+          socket.emit('feed:personalized_update', update);
+        }
+
+        logger.info('Personalized feed processed for user', {
+          component: 'WebSocketServer',
+          socketId: socket.id,
+          userId: socket.userId,
+          updateCount: personalizedUpdates.length,
+          hasPreferences: !!(payload.preferences && payload.preferences.length > 0)
+        });
+
+      } catch (error) {
+        logger.error('Failed to process personalized feed', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId
+        });
+
+        socket.emit('error', {
+          code: 'PERSONALIZED_FEED_FAILED',
+          message: 'Failed to generate personalized feed'
+        });
+      }
+    });
+
+    socket.on('report_feed_conflict', (payload: { updateId: string; issue: string }) => {
+      if (!socket.isAuthenticated || !socket.userId) {
+        return; // Silently ignore if not authenticated
+      }
+
+      // Log feed conflict report for monitoring
+      logger.warn('Feed conflict reported by user', {
+        component: 'WebSocketServer',
+        socketId: socket.id,
+        userId: socket.userId,
+        updateId: payload.updateId,
+        issue: payload.issue
+      });
+
+      // For now, just acknowledge the report
+      socket.emit('feed:conflict_resolved', {
+        updateId: payload.updateId,
+        resolution: 'reported',
+        timestamp: new Date()
+      });
+    });
+
+    // Handle recommendation requests
+    socket.on('request_recommendations', async (payload: { limit?: number; preferences?: string[] }) => {
+      if (!socket.isAuthenticated || !socket.userId) {
+        socket.emit('error', {
+          code: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication required for recommendations'
+        });
+        return;
+      }
+
+      try {
+        const { RecommendationEngine } = await import('../services/recommendationEngine');
+        const recommendationEngine = RecommendationEngine.getInstance();
+        
+        const recommendations = await recommendationEngine.generatePersonalizedRecommendations(
+          socket.userId,
+          payload.limit || 5
+        );
+
+        if (recommendations.length === 0) {
+          socket.emit('recommendation:no_results', {
+            message: 'No recommendations available at this time'
+          });
+          return;
+        }
+
+        // Send each recommendation individually for real-time delivery
+        for (const recommendation of recommendations) {
+          socket.emit('recommendation:personalized', recommendation);
+        }
+
+        logger.info('Personalized recommendations sent to user', {
+          component: 'WebSocketServer',
+          socketId: socket.id,
+          userId: socket.userId,
+          recommendationCount: recommendations.length
+        });
+
+      } catch (error) {
+        logger.error('Failed to generate recommendations', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId
+        });
+
+        socket.emit('error', {
+          code: 'RECOMMENDATIONS_FAILED',
+          message: 'Failed to generate recommendations'
+        });
+      }
+    });
+
+    socket.on('request_trending_content', async (payload: { timeWindow?: '1h' | '6h' | '24h'; category?: string }) => {
+      if (!socket.isAuthenticated || !socket.userId) {
+        socket.emit('error', {
+          code: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication required for trending content'
+        });
+        return;
+      }
+
+      try {
+        const { RecommendationEngine } = await import('../services/recommendationEngine');
+        const recommendationEngine = RecommendationEngine.getInstance();
+        
+        const trendingContent = await recommendationEngine.detectTrendingContent(
+          10,
+          payload.timeWindow || '24h'
+        );
+
+        if (trendingContent.length === 0) {
+          socket.emit('recommendation:no_trending', {
+            message: 'No trending content available',
+            timeWindow: payload.timeWindow || '24h'
+          });
+          return;
+        }
+
+        // Send trending content updates
+        for (const content of trendingContent) {
+          socket.emit('recommendation:trending_content', content);
+        }
+
+        logger.info('Trending content sent to user', {
+          component: 'WebSocketServer',
+          socketId: socket.id,
+          userId: socket.userId,
+          contentCount: trendingContent.length,
+          timeWindow: payload.timeWindow || '24h'
+        });
+
+      } catch (error) {
+        logger.error('Failed to fetch trending content', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId
+        });
+
+        socket.emit('error', {
+          code: 'TRENDING_CONTENT_FAILED',
+          message: 'Failed to fetch trending content'
+        });
+      }
+    });
+
+    socket.on('recommendation_feedback', async (payload: {
+      userId: string;
+      postId: string;
+      feedback: string;
+      feedbackType: 'view' | 'like' | 'share' | 'dismiss' | 'report';
+      timestamp: Date;
+    }) => {
+      if (!socket.isAuthenticated || !socket.userId) {
+        socket.emit('error', {
+          code: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication required for feedback'
+        });
+        return;
+      }
+
+      // Validate feedback type
+      const validFeedbackTypes = ['positive', 'negative', 'neutral'];
+      if (!validFeedbackTypes.includes(payload.feedback)) {
+        socket.emit('error', {
+          code: 'INVALID_FEEDBACK_TYPE',
+          message: 'Feedback must be positive, negative, or neutral'
+        });
+        return;
+      }
+
+      // Ensure the feedback is from the authenticated user
+      if (payload.userId !== socket.userId) {
+        socket.emit('error', {
+          code: 'UNAUTHORIZED_FEEDBACK',
+          message: 'Can only provide feedback for your own account'
+        });
+        return;
+      }
+
+      try {
+        const { RecommendationEngine } = await import('../services/recommendationEngine');
+        const recommendationEngine = RecommendationEngine.getInstance();
+        
+        await recommendationEngine.processRecommendationFeedback(
+          payload.userId,
+          payload.postId,
+          payload.feedback
+        );
+
+        // Acknowledge feedback processing
+        socket.emit('recommendation:feedback_processed', {
+          postId: payload.postId,
+          feedback: payload.feedback,
+          timestamp: payload.timestamp
+        });
+
+        logger.info('Recommendation feedback processed', {
+          component: 'WebSocketServer',
+          socketId: socket.id,
+          userId: socket.userId,
+          postId: payload.postId,
+          feedback: payload.feedback
+        });
+
+      } catch (error) {
+        logger.error('Failed to process recommendation feedback', {
+          component: 'WebSocketServer',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          socketId: socket.id,
+          userId: socket.userId,
+          postId: payload.postId
+        });
+
+        socket.emit('error', {
+          code: 'FEEDBACK_PROCESSING_FAILED',
+          message: 'Failed to process recommendation feedback'
+        });
+      }
     });
 
     // Update last activity on any event
@@ -293,6 +742,9 @@ export class WebSocketServer {
         if (connectionInfo) {
           connectionInfo.lastActivity = new Date();
         }
+        
+        // Update activity in connection manager
+        this.connectionManager.updateActivity(socket.id);
       }
     });
 
@@ -311,7 +763,7 @@ export class WebSocketServer {
   /**
    * Handle socket disconnection
    */
-  private handleDisconnection(socket: any, reason: string): void {
+  private async handleDisconnection(socket: any, reason: string): Promise<void> {
     const startTime = Date.now();
     
     logger.info('WebSocket disconnection', {
@@ -319,7 +771,8 @@ export class WebSocketServer {
       socketId: socket.id,
       userId: socket.userId,
       reason,
-      wasAuthenticated: socket.isAuthenticated
+      wasAuthenticated: socket.isAuthenticated,
+      roomsJoined: socket.data?.roomsJoined || []
     });
 
     // Clean up authenticated user
@@ -330,6 +783,9 @@ export class WebSocketServer {
       // Remove from connected users
       this.connectedUsers.delete(socket.id);
       
+      // Remove connection from connection manager
+      this.connectionManager.removeConnection(socket.id);
+      
       // Remove socket from user sockets
       const userSocketSet = this.userSockets.get(userId);
       if (userSocketSet) {
@@ -338,12 +794,15 @@ export class WebSocketServer {
         // If user has no more sockets, remove from map and broadcast offline
         if (userSocketSet.size === 0) {
           this.userSockets.delete(userId);
-          this.broadcastUserPresence(userId, username, 'offline');
+          await this.broadcastUserPresence(userId, username, 'offline');
         }
       }
       
       // Clean up rate limits (optional, or keep for a while)
       // this.rateLimits.delete(userId);
+      
+      // Update cluster connection count
+      this.updateClusterConnectionCount();
     }
 
     const disconnectionTime = Date.now() - startTime;
@@ -360,24 +819,23 @@ export class WebSocketServer {
    * Broadcast user presence to relevant users
    * This is a placeholder - will be expanded when implementing follows system integration
    */
-  private broadcastUserPresence(userId: string, username: string, status: 'online' | 'offline'): void {
-    // For now, just log the presence change
-    // Later this will broadcast to followers and relevant rooms
-    logger.info('User presence changed', {
-      component: 'WebSocketServer',
-      userId,
-      username,
-      status,
-      timestamp: new Date().toISOString()
-    });
-    
-    // TODO: Implement broadcasting to followers and relevant rooms
-    // this.io.to('followers:' + userId).emit('user:presence', {
-    //   userId,
-    //   username,
-    //   status,
-    //   lastSeen: status === 'offline' ? new Date() : undefined
-    // });
+  private async broadcastUserPresence(userId: string, username: string, status: 'online' | 'offline'): Promise<void> {
+    try {
+      // Import presence manager
+      const { presenceManager } = await import('../services/presenceManager');
+      
+      // Broadcast presence change to followers
+      await presenceManager.broadcastPresenceChange(userId, username, status);
+      
+    } catch (error) {
+      logger.error('Failed to broadcast user presence', {
+        component: 'WebSocketServer',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+        username,
+        status
+      });
+    }
   }
 
   /**
@@ -427,5 +885,110 @@ export class WebSocketServer {
    */
   public getOnlineUsers(): string[] {
     return Array.from(this.userSockets.keys());
+  }
+
+  /**
+   * Setup clustering functionality
+   */
+  private async setupClustering(): Promise<void> {
+    if (!this.clusterManager) {
+      return;
+    }
+    
+    try {
+      // Setup Redis adapter for Socket.IO
+      await this.clusterManager.setupRedisAdapter(this.io);
+      
+      // Register this server in the cluster
+      await this.clusterManager.registerServer();
+      
+      // Start heartbeat mechanism
+      await this.clusterManager.startHeartbeat();
+      
+      // Setup cluster event handlers
+      this.setupClusterEventHandlers();
+      
+      logger.info('WebSocket clustering setup completed', {
+        component: 'WebSocketServer',
+        serverId: this.clusterManager['config'].serverId
+      });
+      
+    } catch (error) {
+      logger.error('Failed to setup WebSocket clustering', {
+        component: 'WebSocketServer',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      // Continue without clustering
+      this.clusterManager = undefined;
+    }
+  }
+
+  /**
+   * Setup cluster event handlers
+   */
+  private setupClusterEventHandlers(): void {
+    if (!this.clusterManager) {
+      return;
+    }
+    
+    // Handle cluster broadcast events
+    this.clusterManager.on('cluster:broadcast', (eventData: any) => {
+      this.io.emit(eventData.type, eventData.data);
+    });
+    
+    // Handle cluster user events
+    this.clusterManager.on('cluster:user_event', (eventData: any) => {
+      if (eventData.targetUserId) {
+        this.broadcastToUser(eventData.targetUserId, eventData.type, eventData.data);
+      }
+    });
+    
+    // Handle batch events
+    this.clusterManager.on('cluster:batch_events', (events: any[]) => {
+      events.forEach(event => {
+        this.io.emit(event.type, event.data);
+      });
+    });
+    
+    // Handle server failures
+    this.clusterManager.on('server:failure', (failureData: any) => {
+      logger.warn('Cluster server failure detected', {
+        component: 'WebSocketServer',
+        failedServer: failureData.serverId,
+        reason: failureData.reason
+      });
+      // Handle connection migration if needed
+    });
+    
+    // Handle scaling events
+    this.clusterManager.on('scale:up', (scaleData: any) => {
+      logger.info('Cluster scale-up event', {
+        component: 'WebSocketServer',
+        scaleData
+      });
+    });
+    
+    this.clusterManager.on('scale:down', (scaleData: any) => {
+      logger.info('Cluster scale-down event', {
+        component: 'WebSocketServer',
+        scaleData
+      });
+    });
+  }
+
+  /**
+   * Get cluster manager instance
+   */
+  public getClusterManager(): WebSocketClusterManager | undefined {
+    return this.clusterManager;
+  }
+
+  /**
+   * Update connection count for cluster manager
+   */
+  private updateClusterConnectionCount(): void {
+    if (this.clusterManager) {
+      this.clusterManager.updateConnectionCount(this.connectedUsers.size);
+    }
   }
 }

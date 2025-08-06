@@ -5,29 +5,19 @@
 import { Request, Response } from 'express';
 import { likesController } from '../../src/controllers/likes';
 import { getSupabaseClient } from '../../src/services/supabase';
-import { logger } from '../../src/utils/logger';
+import { webSocketEventsService } from '../../src/services/websocketEvents';
 
 // Mock dependencies
 jest.mock('../../src/services/supabase');
-jest.mock('../../src/utils/logger');
+jest.mock('../../src/services/websocketEvents');
 
 const mockSupabaseClient = {
   rpc: jest.fn(),
-  from: jest.fn(() => ({
-    select: jest.fn(() => ({
-      eq: jest.fn(() => ({
-        eq: jest.fn(() => ({
-          eq: jest.fn(() => ({
-            single: jest.fn()
-          }))
-        }))
-      }))
-    }))
-  }))
+  from: jest.fn()
 };
 
 const mockGetSupabaseClient = getSupabaseClient as jest.MockedFunction<typeof getSupabaseClient>;
-const mockLogger = logger as jest.Mocked<typeof logger>;
+const mockWebSocketEventsService = webSocketEventsService as jest.Mocked<typeof webSocketEventsService>;
 
 describe('Likes Controller', () => {
   let mockReq: Partial<Request>;
@@ -37,10 +27,20 @@ describe('Likes Controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetSupabaseClient.mockReturnValue(mockSupabaseClient as any);
+    
+    // Reset WebSocket mock
+    mockWebSocketEventsService.emitLikeEvent = jest.fn().mockResolvedValue(undefined);
+
+    // Set up default mocks for Supabase client chain
+    // This ensures that when controller tries to call .from() it doesn't fail immediately
+    const mockSingle = jest.fn().mockResolvedValue({ data: null, error: { message: 'Default mock' } });
+    const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+    const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+    mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
 
     mockReq = {
       requestId: 'test-request-id',
-      user: { id: 'user-123', email: 'test@example.com' },
+      user: { id: 'user-123', email: 'test@example.com', emailConfirmed: true },
       body: {},
       query: {}
     };
@@ -55,6 +55,9 @@ describe('Likes Controller', () => {
 
   describe('toggleLike', () => {
     it('should successfully toggle like for video', async () => {
+      // Clear the default mocks first
+      jest.clearAllMocks();
+      
       const mockRpcResponse = {
         data: [{ liked: true, total_likes: 5 }],
         error: null
@@ -62,12 +65,18 @@ describe('Likes Controller', () => {
 
       mockSupabaseClient.rpc.mockResolvedValue(mockRpcResponse);
 
+      // Mock the author lookup to return nothing (so WebSocket won't fire)
+      const mockSingle = jest.fn().mockResolvedValue({ data: null, error: { message: 'Not found' } });
+      const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+      const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+      mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
       mockReq.body = {
         content_type: 'video',
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockSupabaseClient.rpc).toHaveBeenCalledWith('toggle_like', {
         p_user_id: 'user-123',
@@ -93,12 +102,18 @@ describe('Likes Controller', () => {
 
       mockSupabaseClient.rpc.mockResolvedValue(mockRpcResponse);
 
+      // Mock the author lookup to return nothing (so WebSocket won't fire)
+      const mockSingle = jest.fn().mockResolvedValue({ data: null, error: { message: 'Not found' } });
+      const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+      const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+      mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
       mockReq.body = {
         content_type: 'post',
         content_id: '987fcdeb-51a2-43d1-9f12-345678901234'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockSupabaseClient.rpc).toHaveBeenCalledWith('toggle_like', {
         p_user_id: 'user-123',
@@ -117,9 +132,9 @@ describe('Likes Controller', () => {
     });
 
     it('should return 401 if user is not authenticated', async () => {
-      mockReq.user = undefined;
+      (mockReq as any).user = undefined;
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(401);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -133,7 +148,7 @@ describe('Likes Controller', () => {
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(400);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -147,7 +162,7 @@ describe('Likes Controller', () => {
         content_type: 'video'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(400);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -162,7 +177,7 @@ describe('Likes Controller', () => {
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(400);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -177,7 +192,7 @@ describe('Likes Controller', () => {
         content_id: 'invalid-uuid'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(400);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -199,7 +214,7 @@ describe('Likes Controller', () => {
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(404);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -221,7 +236,7 @@ describe('Likes Controller', () => {
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.toggleLike(mockReq as Request, mockRes as Response);
+      await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(500);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -229,48 +244,261 @@ describe('Likes Controller', () => {
         error: 'failed to toggle like'
       });
     });
+
+    describe('WebSocket Integration', () => {
+      beforeEach(() => {
+        // Mock successful database operations
+        mockSupabaseClient.rpc.mockResolvedValue({
+          data: [{ liked: true, total_likes: 5 }],
+          error: null
+        });
+      });
+
+      it('should emit WebSocket event successfully when user likes video', async () => {
+        // Mock getting video author info - set up complete chain
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: { user_id: 'author-456', users: { username: 'author_user' } },
+          error: null
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', username: 'test_user', emailConfirmed: true };
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        expect(mockWebSocketEventsService.emitLikeEvent).toHaveBeenCalledWith(
+          'video',
+          '123e4567-e89b-12d3-a456-426614174000',
+          'author-456',
+          'user-123',
+          'test_user',
+          true,
+          5
+        );
+
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+      });
+
+      it('should emit WebSocket event successfully when user likes post', async () => {
+        // Mock getting post author info - set up complete chain
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: { user_id: 'author-789', users: { username: 'post_author' } },
+          error: null
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'post',
+          content_id: '987fcdeb-51a2-43d1-9f12-345678901234'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', username: 'test_user', emailConfirmed: true };
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        expect(mockWebSocketEventsService.emitLikeEvent).toHaveBeenCalledWith(
+          'post',
+          '987fcdeb-51a2-43d1-9f12-345678901234',
+          'author-789',
+          'user-123',
+          'test_user',
+          true,
+          5
+        );
+
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+      });
+
+      it('should not emit WebSocket event when user likes their own content', async () => {
+        // Mock getting author info where author is the same as the liker
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: { user_id: 'user-123', users: { username: 'test_user' } },
+          error: null
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', username: 'test_user', emailConfirmed: true };
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        // Should not emit WebSocket event when user likes their own content
+        expect(mockWebSocketEventsService.emitLikeEvent).not.toHaveBeenCalled();
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+      });
+
+      it('should continue successfully even if WebSocket emission fails', async () => {
+        // Mock WebSocket failure
+        mockWebSocketEventsService.emitLikeEvent.mockRejectedValue(new Error('WebSocket failed'));
+
+        // Mock getting author info
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: { user_id: 'author-456', users: { username: 'author_user' } },
+          error: null
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', username: 'test_user', emailConfirmed: true };
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        expect(mockWebSocketEventsService.emitLikeEvent).toHaveBeenCalled();
+        
+        // Should still return success even if WebSocket fails
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+        expect(mockRes.json).toHaveBeenCalledWith({
+          success: true,
+          liked: true,
+          likes_count: 5,
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        });
+      });
+
+      it('should continue successfully even if author info retrieval fails', async () => {
+        // Mock author info retrieval failure
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: null,
+          error: { message: 'Content not found' }
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', username: 'test_user', emailConfirmed: true };
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        // Should not emit WebSocket event if author info fails
+        expect(mockWebSocketEventsService.emitLikeEvent).not.toHaveBeenCalled();
+        
+        // Should still return success
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+        expect(mockRes.json).toHaveBeenCalledWith({
+          success: true,
+          liked: true,
+          likes_count: 5,
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        });
+      });
+
+      it('should handle missing username gracefully', async () => {
+        // Mock author info with missing username
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: { user_id: 'author-456', users: null },
+          error: null
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', username: 'test_user', emailConfirmed: true };
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        // Should not emit WebSocket event if username is missing
+        expect(mockWebSocketEventsService.emitLikeEvent).not.toHaveBeenCalled();
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+      });
+
+      it('should use fallback username when user username is missing', async () => {
+        // Mock getting author info
+        const mockSingle = jest.fn().mockResolvedValue({
+          data: { user_id: 'author-456', users: { username: 'author_user' } },
+          error: null
+        });
+        
+        const mockEq = jest.fn().mockReturnValue({ single: mockSingle });
+        const mockSelect = jest.fn().mockReturnValue({ eq: mockEq });
+        mockSupabaseClient.from.mockReturnValue({ select: mockSelect });
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000'
+        };
+        mockReq.user = { id: 'user-123', email: 'test@example.com', emailConfirmed: true }; // No username
+
+        await likesController.toggleLike(mockReq as Request, mockRes as Response, mockNext);
+
+        expect(mockWebSocketEventsService.emitLikeEvent).toHaveBeenCalledWith(
+          'video',
+          '123e4567-e89b-12d3-a456-426614174000',
+          'author-456',
+          'user-123',
+          'Unknown User', // Fallback username
+          true,
+          5
+        );
+
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+      });
+    });
   });
 
   describe('getLikeStatus', () => {
-    const mockFromChain = {
-      select: jest.fn(() => ({
-        eq: jest.fn(() => ({
-          eq: jest.fn(() => ({
-            eq: jest.fn(() => ({
-              single: jest.fn()
-            }))
-          }))
-        })),
-        count: 'exact',
-        head: true
-      }))
-    };
-
-    beforeEach(() => {
-      mockSupabaseClient.from.mockReturnValue(mockFromChain as any);
-    });
-
     it('should successfully get like status when user has liked content', async () => {
-      // Mock user has liked the content
-      mockFromChain.select().eq().eq().eq().single.mockResolvedValue({
+      // First call: Check if user liked the content
+      const mockLikeCheckSingle = jest.fn().mockResolvedValue({
         data: { id: 'like-123' },
         error: null
       });
-
-      // Mock likes count
-      mockSupabaseClient.from.mockReturnValueOnce({
-        select: jest.fn().mockResolvedValue({
-          count: 10,
-          error: null
-        })
-      } as any);
+      
+      const mockLikeCheckEq3 = jest.fn().mockReturnValue({ single: mockLikeCheckSingle });
+      const mockLikeCheckEq2 = jest.fn().mockReturnValue({ eq: mockLikeCheckEq3 });
+      const mockLikeCheckEq1 = jest.fn().mockReturnValue({ eq: mockLikeCheckEq2 });
+      const mockLikeCheckSelect = jest.fn().mockReturnValue({ eq: mockLikeCheckEq1 });
+      
+      // Second call: Get total likes count
+      const mockCountEq2 = jest.fn().mockResolvedValue({
+        count: 10,
+        error: null
+      });
+      const mockCountEq1 = jest.fn().mockReturnValue({ eq: mockCountEq2 });
+      const mockCountSelect = jest.fn().mockReturnValue({ eq: mockCountEq1 });
+      
+      mockSupabaseClient.from
+        .mockReturnValueOnce({ select: mockLikeCheckSelect })
+        .mockReturnValueOnce({ select: mockCountSelect });
 
       mockReq.query = {
         content_type: 'video',
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.getLikeStatus(mockReq as Request, mockRes as Response);
+      await likesController.getLikeStatus(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(200);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -285,26 +513,35 @@ describe('Likes Controller', () => {
     });
 
     it('should successfully get like status when user has not liked content', async () => {
-      // Mock user has not liked the content
-      mockFromChain.select().eq().eq().eq().single.mockResolvedValue({
+      // First call: Check if user liked the content (returns null - user hasn't liked)
+      const mockLikeCheckSingle = jest.fn().mockResolvedValue({
         data: null,
         error: { code: 'PGRST116' } // No rows returned
       });
-
-      // Mock likes count
-      mockSupabaseClient.from.mockReturnValueOnce({
-        select: jest.fn().mockResolvedValue({
-          count: 5,
-          error: null
-        })
-      } as any);
+      
+      const mockLikeCheckEq3 = jest.fn().mockReturnValue({ single: mockLikeCheckSingle });
+      const mockLikeCheckEq2 = jest.fn().mockReturnValue({ eq: mockLikeCheckEq3 });
+      const mockLikeCheckEq1 = jest.fn().mockReturnValue({ eq: mockLikeCheckEq2 });
+      const mockLikeCheckSelect = jest.fn().mockReturnValue({ eq: mockLikeCheckEq1 });
+      
+      // Second call: Get total likes count
+      const mockCountEq2 = jest.fn().mockResolvedValue({
+        count: 5,
+        error: null
+      });
+      const mockCountEq1 = jest.fn().mockReturnValue({ eq: mockCountEq2 });
+      const mockCountSelect = jest.fn().mockReturnValue({ eq: mockCountEq1 });
+      
+      mockSupabaseClient.from
+        .mockReturnValueOnce({ select: mockLikeCheckSelect })
+        .mockReturnValueOnce({ select: mockCountSelect });
 
       mockReq.query = {
         content_type: 'post',
         content_id: '987fcdeb-51a2-43d1-9f12-345678901234'
       };
 
-      await likesController.getLikeStatus(mockReq as Request, mockRes as Response);
+      await likesController.getLikeStatus(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(200);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -319,9 +556,9 @@ describe('Likes Controller', () => {
     });
 
     it('should return 401 if user is not authenticated', async () => {
-      mockReq.user = undefined;
+      (mockReq as any).user = undefined;
 
-      await likesController.getLikeStatus(mockReq as Request, mockRes as Response);
+      await likesController.getLikeStatus(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(401);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -335,7 +572,7 @@ describe('Likes Controller', () => {
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.getLikeStatus(mockReq as Request, mockRes as Response);
+      await likesController.getLikeStatus(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(400);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -350,7 +587,7 @@ describe('Likes Controller', () => {
         content_id: '123e4567-e89b-12d3-a456-426614174000'
       };
 
-      await likesController.getLikeStatus(mockReq as Request, mockRes as Response);
+      await likesController.getLikeStatus(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(400);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -386,7 +623,7 @@ describe('Likes Controller', () => {
         offset: '0'
       };
 
-      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response);
+      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockSupabaseClient.rpc).toHaveBeenCalledWith('get_user_liked_content', {
         p_user_id: 'user-123',
@@ -408,9 +645,9 @@ describe('Likes Controller', () => {
     });
 
     it('should return 401 if user is not authenticated', async () => {
-      mockReq.user = undefined;
+      (mockReq as any).user = undefined;
 
-      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response);
+      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockRes.status).toHaveBeenCalledWith(401);
       expect(mockRes.json).toHaveBeenCalledWith({
@@ -425,7 +662,7 @@ describe('Likes Controller', () => {
 
       mockReq.query = {}; // No parameters
 
-      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response);
+      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockSupabaseClient.rpc).toHaveBeenCalledWith('get_user_liked_content', {
         p_user_id: 'user-123',
@@ -443,7 +680,7 @@ describe('Likes Controller', () => {
         limit: '100' // Try to exceed maximum
       };
 
-      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response);
+      await likesController.getUserLikedContent(mockReq as Request, mockRes as Response, mockNext);
 
       expect(mockSupabaseClient.rpc).toHaveBeenCalledWith('get_user_liked_content', {
         p_user_id: 'user-123',

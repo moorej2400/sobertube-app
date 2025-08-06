@@ -6,10 +6,12 @@ import { Request, Response } from 'express';
 import { commentsController } from '../../src/controllers/comments';
 import { getSupabaseClient } from '../../src/services/supabase';
 import { logger } from '../../src/utils/logger';
+import { webSocketEventsService } from '../../src/services/websocketEvents';
 
 // Mock dependencies
 jest.mock('../../src/services/supabase');
 jest.mock('../../src/utils/logger');
+jest.mock('../../src/services/websocketEvents');
 
 const mockSupabaseClient = {
   rpc: jest.fn(),
@@ -20,12 +22,18 @@ const mockSupabaseClient = {
           select: jest.fn()
         }))
       }))
+    })),
+    select: jest.fn(() => ({
+      eq: jest.fn(() => ({
+        single: jest.fn()
+      }))
     }))
   }))
 };
 
 const mockGetSupabaseClient = getSupabaseClient as jest.MockedFunction<typeof getSupabaseClient>;
 const mockLogger = logger as jest.Mocked<typeof logger>;
+const mockWebSocketEventsService = webSocketEventsService as jest.Mocked<typeof webSocketEventsService>;
 
 describe('Comments Controller', () => {
   let mockReq: Partial<Request>;
@@ -601,6 +609,256 @@ describe('Comments Controller', () => {
       expect(mockRes.json).toHaveBeenCalledWith({
         success: false,
         error: 'comment not found or you do not have permission to delete it'
+      });
+    });
+  });
+
+  describe('WebSocket Integration', () => {
+    beforeEach(() => {
+      // Reset WebSocket service mock
+      jest.clearAllMocks();
+      mockWebSocketEventsService.emitCommentEvent = jest.fn().mockResolvedValue(undefined);
+      mockWebSocketEventsService.emitCommentUpdateEvent = jest.fn().mockResolvedValue(undefined);
+      mockWebSocketEventsService.emitCommentDeleteEvent = jest.fn().mockResolvedValue(undefined);
+    });
+
+    describe('createComment WebSocket integration', () => {
+      it('should emit WebSocket event when creating a comment on video', async () => {
+        const mockRpcResponse = {
+          data: [{
+            id: 'comment-123',
+            user_id: 'user-123',
+            username: 'testuser',
+            display_name: 'Test User',
+            profile_picture_url: null,
+            content: 'Great video!',
+            likes_count: 0,
+            replies_count: 0,
+            is_edited: false,
+            created_at: '2024-01-01T00:00:00Z',
+            updated_at: '2024-01-01T00:00:00Z',
+            parent_comment_id: null
+          }],
+          error: null
+        };
+
+        const mockVideoData = {
+          data: {
+            user_id: 'author-123',
+            users: { username: 'video_author' }
+          },
+          error: null
+        };
+
+        mockSupabaseClient.rpc.mockResolvedValue(mockRpcResponse);
+        mockSupabaseClient.from().select().eq().single.mockResolvedValue(mockVideoData);
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000',
+          content: 'Great video!'
+        };
+        mockReq.user = { id: 'user-123', username: 'testuser' };
+
+        await commentsController.createComment(mockReq as Request, mockRes as Response);
+
+        expect(mockWebSocketEventsService.emitCommentEvent).toHaveBeenCalledWith(
+          'comment-123',
+          '123e4567-e89b-12d3-a456-426614174000',
+          'author-123',
+          'user-123',
+          'testuser',
+          'Great video!',
+          undefined
+        );
+        expect(mockRes.status).toHaveBeenCalledWith(201);
+      });
+
+      it('should emit WebSocket event when creating a reply comment on post', async () => {
+        const mockRpcResponse = {
+          data: [{
+            id: 'comment-456',
+            user_id: 'user-123',
+            username: 'testuser',
+            display_name: 'Test User',
+            profile_picture_url: null,
+            content: 'Great post!',
+            likes_count: 0,
+            replies_count: 0,
+            is_edited: false,
+            created_at: '2024-01-01T00:00:00Z',
+            updated_at: '2024-01-01T00:00:00Z',
+            parent_comment_id: 'parent-comment-123'
+          }],
+          error: null
+        };
+
+        const mockPostData = {
+          data: {
+            user_id: 'author-456',
+            users: { username: 'post_author' }
+          },
+          error: null
+        };
+
+        mockSupabaseClient.rpc.mockResolvedValue(mockRpcResponse);
+        mockSupabaseClient.from().select().eq().single.mockResolvedValue(mockPostData);
+
+        mockReq.body = {
+          content_type: 'post',
+          content_id: '987fcdeb-51a2-43d1-9f12-345678901234',
+          content: 'Great post!',
+          parent_comment_id: 'parent-comment-123'
+        };
+        mockReq.user = { id: 'user-123', username: 'testuser' };
+
+        await commentsController.createComment(mockReq as Request, mockRes as Response);
+
+        expect(mockWebSocketEventsService.emitCommentEvent).toHaveBeenCalledWith(
+          'comment-456',
+          '987fcdeb-51a2-43d1-9f12-345678901234',
+          'author-456',
+          'user-123',
+          'testuser',
+          'Great post!',
+          'parent-comment-123'
+        );
+        expect(mockRes.status).toHaveBeenCalledWith(201);
+      });
+
+      it('should not fail if WebSocket event emission fails', async () => {
+        const mockRpcResponse = {
+          data: [{
+            id: 'comment-123',
+            user_id: 'user-123',
+            username: 'testuser',
+            content: 'Great video!',
+            parent_comment_id: null
+          }],
+          error: null
+        };
+
+        const mockVideoData = {
+          data: {
+            user_id: 'author-123',
+            users: { username: 'video_author' }
+          },
+          error: null
+        };
+
+        mockSupabaseClient.rpc.mockResolvedValue(mockRpcResponse);
+        mockSupabaseClient.from().select().eq().single.mockResolvedValue(mockVideoData);
+        mockWebSocketEventsService.emitCommentEvent.mockRejectedValue(new Error('WebSocket failed'));
+
+        mockReq.body = {
+          content_type: 'video',
+          content_id: '123e4567-e89b-12d3-a456-426614174000',
+          content: 'Great video!'
+        };
+        mockReq.user = { id: 'user-123', username: 'testuser' };
+
+        await commentsController.createComment(mockReq as Request, mockRes as Response);
+
+        expect(mockRes.status).toHaveBeenCalledWith(201);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          'Failed to emit WebSocket comment event',
+          expect.objectContaining({
+            error: 'WebSocket failed'
+          })
+        );
+      });
+    });
+
+    describe('updateComment WebSocket integration', () => {
+      it('should emit WebSocket update event when updating a comment', async () => {
+        const mockRpcResponse = {
+          data: [{
+            id: 'comment-123',
+            user_id: 'user-123',
+            username: 'testuser',
+            content: 'Updated comment',
+            parent_comment_id: null
+          }],
+          error: null
+        };
+
+        const mockCommentInfo = {
+          data: {
+            content_type: 'video',
+            content_id: '123e4567-e89b-12d3-a456-426614174000'
+          },
+          error: null
+        };
+
+        const mockVideoData = {
+          data: {
+            user_id: 'author-123',
+            users: { username: 'video_author' }
+          },
+          error: null
+        };
+
+        mockSupabaseClient.rpc.mockResolvedValue(mockRpcResponse);
+        // Mock the comment info query then the video data query
+        mockSupabaseClient.from().select().eq().single
+          .mockResolvedValueOnce(mockCommentInfo)
+          .mockResolvedValueOnce(mockVideoData);
+
+        mockReq.params = { id: 'comment-123' };
+        mockReq.body = { content: 'Updated comment' };
+        mockReq.user = { id: 'user-123', username: 'testuser' };
+
+        await commentsController.updateComment(mockReq as Request, mockRes as Response);
+
+        expect(mockWebSocketEventsService.emitCommentUpdateEvent).toHaveBeenCalledWith(
+          'comment-123',
+          '123e4567-e89b-12d3-a456-426614174000',
+          'author-123',
+          'user-123',
+          'testuser',
+          'Updated comment',
+          null
+        );
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+      });
+    });
+
+    describe('deleteComment WebSocket integration', () => {
+      it('should emit WebSocket delete event when deleting a comment', async () => {
+        const mockDeleteResponse = {
+          data: [{
+            id: 'comment-123',
+            content_type: 'post',
+            content_id: '987fcdeb-51a2-43d1-9f12-345678901234',
+            parent_comment_id: null
+          }],
+          error: null
+        };
+
+        const mockPostData = {
+          data: {
+            user_id: 'author-456',
+            users: { username: 'post_author' }
+          },
+          error: null
+        };
+
+        mockSupabaseClient.from().delete().eq().eq().select.mockResolvedValue(mockDeleteResponse);
+        mockSupabaseClient.from().select().eq().single.mockResolvedValue(mockPostData);
+
+        mockReq.params = { id: 'comment-123' };
+        mockReq.user = { id: 'user-123', username: 'testuser' };
+
+        await commentsController.deleteComment(mockReq as Request, mockRes as Response);
+
+        expect(mockWebSocketEventsService.emitCommentDeleteEvent).toHaveBeenCalledWith(
+          'comment-123',
+          '987fcdeb-51a2-43d1-9f12-345678901234',
+          'author-456',
+          'user-123',
+          'testuser'
+        );
+        expect(mockRes.status).toHaveBeenCalledWith(200);
       });
     });
   });

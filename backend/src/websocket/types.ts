@@ -79,6 +79,29 @@ export interface FeedUpdatePayload {
   createdAt: Date;
   mediaUrl?: string;
   type: 'new_post' | 'trending' | 'recommended';
+  priority?: 'low' | 'normal' | 'high';
+  personalizedScore?: number;
+  postType?: string;
+}
+
+export interface BatchFeedUpdatePayload {
+  updates: FeedUpdatePayload[];
+  batchId: string;
+  timestamp: Date;
+  userIds: string[];
+}
+
+export interface PriorityFeedUpdatePayload extends FeedUpdatePayload {
+  priority: 'low' | 'normal' | 'high';
+  urgency: number; // 1-10 scale
+  targetUserIds: string[];
+}
+
+export interface FeedConflictResolution {
+  originalUpdate: FeedUpdatePayload;
+  resolvedUpdate: FeedUpdatePayload;
+  conflictType: 'duplicate' | 'outdated' | 'priority_override';
+  resolutionTimestamp: Date;
 }
 
 export interface UserPresencePayload {
@@ -86,6 +109,50 @@ export interface UserPresencePayload {
   username: string;
   status: 'online' | 'offline' | 'away';
   lastSeen?: Date;
+}
+
+export interface UserActivityPayload {
+  userId: string;
+  username: string;
+  activity: 'posting' | 'commenting' | 'liking' | 'browsing' | 'streaming';
+  timestamp: Date;
+  contentId?: string;
+  contentType?: 'video' | 'post';
+}
+
+// Recommendation event interfaces
+export interface TrendingContentPayload {
+  postId: string;
+  authorId: string;
+  authorUsername: string;
+  content: string;
+  engagementScore: number;
+  type: 'trending';
+  trendingRank: number;
+  timeWindow: '1h' | '6h' | '24h';
+  category?: string;
+}
+
+export interface RecommendationPayload {
+  postId: string;
+  authorId: string;
+  authorUsername: string;
+  content: string;
+  createdAt: Date;
+  type: 'recommended';
+  personalizedScore: number;
+  recommendationReason: string;
+  fallbackToTrending?: boolean;
+  mediaUrl?: string;
+  postType?: string;
+}
+
+export interface RecommendationFeedbackPayload {
+  userId: string;
+  postId: string;
+  feedback: 'positive' | 'negative' | 'neutral';
+  feedbackType: 'view' | 'like' | 'share' | 'dismiss' | 'report';
+  timestamp: Date;
 }
 
 // Error and notification interfaces
@@ -97,7 +164,7 @@ export interface SocketErrorPayload {
 
 export interface NotificationPayload {
   id: string;
-  type: 'like' | 'comment' | 'follow' | 'mention' | 'system';
+  type: 'like' | 'comment' | 'follow' | 'mention' | 'system' | 'presence';
   title: string;
   message: string;
   data?: any;
@@ -119,15 +186,27 @@ export interface ServerToClientEvents {
   // Feed and content events
   'feed:update': (payload: FeedUpdatePayload) => void;
   'feed:batch_update': (payload: FeedUpdatePayload[]) => void;
+  'feed:priority_update': (payload: PriorityFeedUpdatePayload) => void;
+  'feed:instant_refresh': (payload: FeedUpdatePayload) => void;
+  'feed:personalized_update': (payload: FeedUpdatePayload) => void;
+  'feed:conflict_resolved': (payload: FeedConflictResolution) => void;
   
   // User presence events
   'user:online': (payload: UserPresencePayload) => void;
   'user:offline': (payload: UserPresencePayload) => void;
   'user:presence': (payload: UserPresencePayload) => void;
+  'user:bulk_presence': (payload: UserPresencePayload[]) => void;
+  'user:activity': (payload: UserActivityPayload) => void;
+  
+  // Recommendation events
+  'recommendation:trending_content': (payload: TrendingContentPayload) => void;
+  'recommendation:personalized': (payload: RecommendationPayload) => void;
+  'recommendation:batch': (payload: RecommendationPayload[]) => void;
   
   // Notification events
   'notification:new': (payload: NotificationPayload) => void;
   'notification:updated': (payload: NotificationPayload) => void;
+  'notification:batch': (payload: NotificationPayload[]) => void;
   
   // System events
   'error': (payload: SocketErrorPayload) => void;
@@ -152,6 +231,13 @@ export interface ClientToServerEvents {
   'join_feed': () => void;
   'leave_feed': () => void;
   'request_feed_update': () => void;
+  'request_instant_refresh': () => void;
+  'request_personalized_feed': (payload: { preferences?: string[] }) => void;
+  'report_feed_conflict': (payload: { updateId: string; issue: string }) => void;
+  
+  // Content room management
+  'join_content': (payload: { contentType: 'video' | 'post'; contentId: string }) => void;
+  'leave_content': (payload: { contentType: 'video' | 'post'; contentId: string }) => void;
   
   // Presence management
   'update_presence': (payload: { status: 'online' | 'away' }) => void;
@@ -160,6 +246,11 @@ export interface ClientToServerEvents {
   // Notification management
   'mark_notification_read': (payload: { notificationId: string }) => void;
   'get_unread_notifications': () => void;
+  
+  // Recommendation management
+  'request_recommendations': (payload: { limit?: number; preferences?: string[] }) => void;
+  'recommendation_feedback': (payload: RecommendationFeedbackPayload) => void;
+  'request_trending_content': (payload: { timeWindow?: '1h' | '6h' | '24h'; category?: string }) => void;
 }
 
 // Socket.IO server event data

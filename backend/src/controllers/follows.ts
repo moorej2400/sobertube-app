@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabase';
 import { logger } from '../utils/logger';
 import { asyncErrorHandler } from '../middleware/errorHandler';
+import { webSocketEventsService } from '../services/websocketEvents';
 
 /**
  * Follow request body interface
@@ -162,6 +163,30 @@ export const followsController = {
         following_count: result.following_count,
         following_id
       };
+
+      // Emit WebSocket event for real-time updates
+      try {
+        const followerUsername = req.user.username || 'Unknown User';
+        const followeeUsername = targetUser.username || 'Unknown User';
+
+        await webSocketEventsService.emitFollowEvent(
+          followerId,
+          followerUsername,
+          following_id,
+          followeeUsername,
+          result.following,
+          result.follower_count
+        );
+      } catch (wsError) {
+        // Log WebSocket error but don't fail the request
+        logger.warn('WebSocket follow event emission failed', {
+          error: wsError instanceof Error ? wsError.message : 'Unknown WebSocket error',
+          followerId,
+          followingId: following_id,
+          following: result.following,
+          requestId: req.requestId
+        });
+      }
 
       logger.info('Follow toggled successfully', {
         followerId,

@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabase';
 import { logger } from '../utils/logger';
 import { asyncErrorHandler } from '../middleware/errorHandler';
+import { webSocketEventsService } from '../services/websocketEvents';
 
 /**
  * Like request body interface
@@ -128,6 +129,79 @@ export const likesController = {
       }
 
       const result = data[0];
+      
+      // Get content author information for WebSocket notification
+      let authorId: string | null = null;
+      let authorUsername: string | null = null;
+      
+      try {
+        if (content_type === 'video') {
+          const { data: videoData, error: videoError } = await supabaseClient
+            .from('videos')
+            .select('user_id, users!inner(username)')
+            .eq('id', content_id)
+            .single();
+            
+          if (!videoError && videoData) {
+            authorId = videoData.user_id;
+            authorUsername = (videoData.users as any)?.username || null;
+          }
+        } else if (content_type === 'post') {
+          const { data: postData, error: postError } = await supabaseClient
+            .from('posts')
+            .select('user_id, users!inner(username)')
+            .eq('id', content_id)
+            .single();
+            
+          if (!postError && postData) {
+            authorId = postData.user_id;
+            authorUsername = (postData.users as any)?.username || null;
+          }
+        }
+      } catch (authorError) {
+        logger.warn('Failed to get content author for WebSocket notification', {
+          error: authorError instanceof Error ? authorError.message : 'Unknown error',
+          contentType: content_type,
+          contentId: content_id,
+          requestId: req.requestId
+        });
+      }
+
+      // Emit real-time WebSocket event
+      if (authorId && authorUsername) {
+        try {
+          await webSocketEventsService.emitLikeEvent(
+            content_type,
+            content_id,
+            authorId,
+            userId,
+            req.user.username || 'Unknown User',
+            result.liked,
+            result.total_likes
+          );
+          
+          logger.info('WebSocket like event emitted successfully', {
+            contentType: content_type,
+            contentId: content_id,
+            authorId,
+            likerId: userId,
+            liked: result.liked,
+            totalLikes: result.total_likes,
+            requestId: req.requestId
+          });
+        } catch (wsError) {
+          logger.warn('Failed to emit WebSocket like event', {
+            error: wsError instanceof Error ? wsError.message : 'Unknown error',
+            contentType: content_type,
+            contentId: content_id,
+            authorId,
+            likerId: userId,
+            requestId: req.requestId
+          });
+          // Don't fail the request if WebSocket fails
+        }
+      }
+
       const response: ToggleLikeResponse = {
         success: true,
         liked: result.liked,
@@ -142,6 +216,7 @@ export const likesController = {
         contentId: content_id,
         liked: result.liked,
         totalLikes: result.total_likes,
+        authorNotified: !!(authorId && authorUsername),
         requestId: req.requestId
       });
 

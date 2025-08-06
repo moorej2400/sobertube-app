@@ -24,7 +24,14 @@
     "clean": "rimraf backend/dist frontend/dist",
     "start": "cross-env NODE_ENV=production concurrently \"npm run start:backend\" \"npm run start:frontend\"",
     "start:backend": "cd backend && npm start",
-    "start:frontend": "cd frontend && npm run preview"
+    "start:frontend": "cd frontend && npm run preview",
+    "docker:setup": "./scripts/setup-dev-environment.sh",
+    "docker:up": "docker compose -f docker-compose.local.yml up -d",
+    "docker:down": "docker compose -f docker-compose.local.yml down",
+    "docker:logs": "docker compose -f docker-compose.local.yml logs -f",
+    "docker:test": "./scripts/test-docker-services.sh",
+    "env:validate": "./scripts/validate-environment.sh",
+    "env:validate:prod": "./scripts/validate-environment.sh .env.production"
   },
   "repository": {
     "type": "git",

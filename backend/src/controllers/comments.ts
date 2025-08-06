@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabase';
 import { logger } from '../utils/logger';
 import { asyncErrorHandler } from '../middleware/errorHandler';
+import { webSocketEventsService } from '../services/websocketEvents';
 
 /**
  * Comment request body interface for creating comments
@@ -197,6 +198,78 @@ export const commentsController = {
         isReply: !!parent_comment_id,
         requestId: req.requestId
       });
+
+      // Get content author information for WebSocket notification
+      let authorId: string | null = null;
+      
+      try {
+        if (content_type === 'video') {
+          const { data: videoData, error: videoError } = await supabaseClient
+            .from('videos')
+            .select('user_id, users!inner(username)')
+            .eq('id', content_id)
+            .single();
+            
+          if (!videoError && videoData) {
+            authorId = videoData.user_id;
+          }
+        } else if (content_type === 'post') {
+          const { data: postData, error: postError } = await supabaseClient
+            .from('posts')
+            .select('user_id, users!inner(username)')
+            .eq('id', content_id)
+            .single();
+            
+          if (!postError && postData) {
+            authorId = postData.user_id;
+          }
+        }
+      } catch (authorError) {
+        logger.warn('Failed to get content author for WebSocket notification', {
+          error: authorError instanceof Error ? authorError.message : 'Unknown error',
+          contentType: content_type,
+          contentId: content_id,
+          commentId: comment.id,
+          requestId: req.requestId
+        });
+      }
+
+      // Emit real-time WebSocket event for new comment
+      if (authorId) {
+        try {
+          await webSocketEventsService.emitCommentEvent(
+            comment.id,
+            content_id, // postId
+            authorId,
+            userId,
+            req.user.username || 'Unknown User',
+            comment.content,
+            parent_comment_id
+          );
+          
+          logger.info('WebSocket comment event emitted successfully', {
+            commentId: comment.id,
+            contentType: content_type,
+            contentId: content_id,
+            authorId,
+            commenterId: userId,
+            commenterUsername: req.user.username,
+            isReply: !!parent_comment_id,
+            requestId: req.requestId
+          });
+        } catch (wsError) {
+          logger.warn('Failed to emit WebSocket comment event', {
+            error: wsError instanceof Error ? wsError.message : 'Unknown error',
+            commentId: comment.id,
+            contentType: content_type,
+            contentId: content_id,
+            authorId,
+            commenterId: userId,
+            requestId: req.requestId
+          });
+          // Don't fail the request if WebSocket fails
+        }
+      }
 
       res.status(201).json({
         success: true,
@@ -488,6 +561,93 @@ export const commentsController = {
         requestId: req.requestId
       });
 
+      // Get content information for WebSocket notification
+      let authorId: string | null = null;
+      let contentType: string | null = null;
+      let contentId: string | null = null;
+      
+      try {
+        // First, get the comment's content information
+        const { data: commentInfo, error: commentError } = await supabaseClient
+          .from('comments')
+          .select('content_type, content_id')
+          .eq('id', commentId)
+          .single();
+          
+        if (!commentError && commentInfo) {
+          contentType = commentInfo.content_type;
+          contentId = commentInfo.content_id;
+          
+          // Then get the content author information
+          if (contentType === 'video') {
+            const { data: videoData, error: videoError } = await supabaseClient
+              .from('videos')
+              .select('user_id, users!inner(username)')
+              .eq('id', contentId)
+              .single();
+              
+            if (!videoError && videoData) {
+              authorId = videoData.user_id;
+
+            }
+          } else if (contentType === 'post') {
+            const { data: postData, error: postError } = await supabaseClient
+              .from('posts')
+              .select('user_id, users!inner(username)')
+              .eq('id', contentId)
+              .single();
+              
+            if (!postError && postData) {
+              authorId = postData.user_id;
+
+            }
+          }
+        }
+      } catch (authorError) {
+        logger.warn('Failed to get content author for WebSocket notification', {
+          error: authorError instanceof Error ? authorError.message : 'Unknown error',
+          commentId,
+          userId,
+          requestId: req.requestId
+        });
+      }
+
+      // Emit real-time WebSocket event for comment update
+      if (authorId && contentId) {
+        try {
+          await webSocketEventsService.emitCommentUpdateEvent(
+            commentId,
+            contentId, // postId
+            authorId,
+            userId,
+            req.user.username || 'Unknown User',
+            comment.content,
+            comment.parent_comment_id
+          );
+          
+          logger.info('WebSocket comment update event emitted successfully', {
+            commentId,
+            contentType,
+            contentId,
+            authorId,
+            commenterId: userId,
+            commenterUsername: req.user.username,
+            requestId: req.requestId
+          });
+        } catch (wsError) {
+          logger.warn('Failed to emit WebSocket comment update event', {
+            error: wsError instanceof Error ? wsError.message : 'Unknown error',
+            commentId,
+            contentType,
+            contentId,
+            authorId,
+            commenterId: userId,
+            requestId: req.requestId
+          });
+          // Don't fail the request if WebSocket fails
+        }
+      }
+
       res.status(200).json({
         success: true,
         data: response
@@ -580,6 +740,77 @@ export const commentsController = {
         wasReply: !!deletedComment.parent_comment_id,
         requestId: req.requestId
       });
+
+      // Get content author information for WebSocket notification
+      let authorId: string | null = null;
+      
+      try {
+        if (deletedComment.content_type === 'video') {
+          const { data: videoData, error: videoError } = await supabaseClient
+            .from('videos')
+            .select('user_id, users!inner(username)')
+            .eq('id', deletedComment.content_id)
+            .single();
+            
+          if (!videoError && videoData) {
+            authorId = videoData.user_id;
+          }
+        } else if (deletedComment.content_type === 'post') {
+          const { data: postData, error: postError } = await supabaseClient
+            .from('posts')
+            .select('user_id, users!inner(username)')
+            .eq('id', deletedComment.content_id)
+            .single();
+            
+          if (!postError && postData) {
+            authorId = postData.user_id;
+          }
+        }
+      } catch (authorError) {
+        logger.warn('Failed to get content author for WebSocket notification', {
+          error: authorError instanceof Error ? authorError.message : 'Unknown error',
+          contentType: deletedComment.content_type,
+          contentId: deletedComment.content_id,
+          commentId,
+          userId,
+          requestId: req.requestId
+        });
+      }
+
+      // Emit real-time WebSocket event for comment deletion
+      if (authorId && deletedComment.content_id) {
+        try {
+          await webSocketEventsService.emitCommentDeleteEvent(
+            commentId,
+            deletedComment.content_id, // postId
+            authorId,
+            userId,
+            req.user.username || 'Unknown User'
+          );
+          
+          logger.info('WebSocket comment delete event emitted successfully', {
+            commentId,
+            contentType: deletedComment.content_type,
+            contentId: deletedComment.content_id,
+            authorId,
+            commenterId: userId,
+            commenterUsername: req.user.username,
+            wasReply: !!deletedComment.parent_comment_id,
+            requestId: req.requestId
+          });
+        } catch (wsError) {
+          logger.warn('Failed to emit WebSocket comment delete event', {
+            error: wsError instanceof Error ? wsError.message : 'Unknown error',
+            commentId,
+            contentType: deletedComment.content_type,
+            contentId: deletedComment.content_id,
+            authorId,
+            commenterId: userId,
+            requestId: req.requestId
+          });
+          // Don't fail the request if WebSocket fails
+        }
+      }
 
       res.status(200).json({
         success: true,

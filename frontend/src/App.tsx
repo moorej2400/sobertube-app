@@ -2,7 +2,7 @@
  * Main App Component for SoberTube Frontend
  */
 
-import React from 'react';
+
 
 function App() {
   return (

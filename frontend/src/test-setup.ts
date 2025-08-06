@@ -4,6 +4,7 @@
  */
 
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
 
 // Global test setup
 console.log('Setting up SoberTube Frontend test environment...');
@@ -11,20 +12,24 @@ console.log('Setting up SoberTube Frontend test environment...');
 // Mock window.matchMedia for responsive design tests
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: jest.fn().mockImplementation(query => ({
+  value: vi.fn().mockImplementation(query => ({
     matches: false,
     media: query,
     onchange: null,
-    addListener: jest.fn(), // deprecated
-    removeListener: jest.fn(), // deprecated
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn(),
-    dispatchEvent: jest.fn(),
+    addListener: vi.fn(), // deprecated
+    removeListener: vi.fn(), // deprecated
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
   })),
 });
 
 // Mock IntersectionObserver for infinite scroll tests
 global.IntersectionObserver = class IntersectionObserver {
+  root = null;
+  rootMargin = '';
+  thresholds = [];
+  
   constructor() {}
   observe() {
     return null;
@@ -34,5 +39,8 @@ global.IntersectionObserver = class IntersectionObserver {
   }
   unobserve() {
     return null;
+  }
+  takeRecords() {
+    return [];
   }
 };

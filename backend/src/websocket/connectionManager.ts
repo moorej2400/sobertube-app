@@ -6,7 +6,6 @@
 import { logger } from '../utils/logger';
 import {
   ConnectionInfo,
-  SocketData,
   UserPresencePayload
 } from './types';
 
@@ -197,7 +196,7 @@ export class ConnectionManager {
       userId,
       username: session.username,
       status: session.isOnline ? 'online' : 'offline',
-      lastSeen: session.isOnline ? undefined : session.lastActivity
+      ...(session.isOnline ? {} : { lastSeen: session.lastActivity })
     };
   }
 

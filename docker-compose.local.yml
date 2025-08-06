@@ -1,0 +1,507 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database with Supabase Extensions
+  postgres:
+    image: supabase/postgres:15.1.0.147
+    container_name: sobertube_postgres
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: supabase_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_super_secure_postgres_password}
+      POSTGRES_PORT: 5432
+      # Performance optimizations for development
+      POSTGRES_MAX_CONNECTIONS: 200
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_WORK_MEM: 4MB
+      POSTGRES_MAINTENANCE_WORK_MEM: 64MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+      - ./database/migrations:/docker-entrypoint-initdb.d/migrations
+    ports:
+      - "5433:5432"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supabase_admin -d postgres -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.8'
+        reservations:
+          memory: 256M
+          cpus: '0.2'
+    restart: unless-stopped
+
+  # Supabase Realtime Server
+  realtime:
+    image: supabase/realtime:v2.25.50
+    container_name: sobertube_realtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-your_super_secure_postgres_password}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO realtime"
+      DB_ENC_KEY: ${REALTIME_ENCRYPTION_KEY:-your_32_character_encryption_key_here}
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:-your_64_character_secret_key_base_here}
+      JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_key_here}
+      REPLICATION_MODE: RLS
+      REPLICATION_POLL_INTERVAL: 100
+      SECURE_CHANNELS: true
+      SLOT_NAME: supabase_realtime_rls
+      TEMPORARY_SLOT: true
+      # Development optimizations
+      MAX_CONNECTIONS: 1000
+      HEARTBEAT_INTERVAL: 30000
+      DB_POOL_SIZE: 10
+    ports:
+      - "4000:4000"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost:4000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    restart: unless-stopped
+
+  # GoTrue Authentication Service
+  auth:
+    image: supabase/gotrue:v2.151.0
+    container_name: sobertube_auth
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inbucket:
+        condition: service_started
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:8000}
+      GOTRUE_URL: ${GOTRUE_URL:-http://localhost:9999}
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_key_here}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgresql://supabase_admin:${POSTGRES_PASSWORD:-your_super_secure_postgres_password}@postgres:5432/postgres?search_path=auth
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-inbucket}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-2500}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@sobertube.local}
+      GOTRUE_MAILER_SUBJECTS_INVITE: "You have been invited to SoberTube"
+      GOTRUE_MAILER_SUBJECTS_CONFIRMATION: "Confirm Your SoberTube Email"
+      GOTRUE_MAILER_SUBJECTS_RECOVERY: "Reset Your SoberTube Password"
+      GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGE: "Confirm Your New Email"
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOTRUE_EXTERNAL_GOOGLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOTRUE_EXTERNAL_GOOGLE_SECRET:-}
+      GOTRUE_EXTERNAL_FACEBOOK_ENABLED: ${GOTRUE_EXTERNAL_FACEBOOK_ENABLED:-false}
+      GOTRUE_EXTERNAL_FACEBOOK_CLIENT_ID: ${GOTRUE_EXTERNAL_FACEBOOK_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_FACEBOOK_SECRET: ${GOTRUE_EXTERNAL_FACEBOOK_SECRET:-}
+      # Additional security and performance settings
+      GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}
+      GOTRUE_RATE_LIMIT_HEADER: X-RateLimit-Limit
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: 60
+      GOTRUE_PASSWORD_MIN_LENGTH: 8
+      GOTRUE_LOG_LEVEL: ${GOTRUE_LOG_LEVEL:-info}
+    ports:
+      - "9999:9999"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    restart: unless-stopped
+
+  # PostgREST API Server
+  rest:
+    image: postgrest/postgrest:v12.0.1
+    container_name: sobertube_rest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgresql://supabase_admin:${POSTGRES_PASSWORD:-your_super_secure_postgres_password}@postgres:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_key_here}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_key_here}
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:3000
+      # Performance and development optimizations
+      PGRST_DB_POOL: 20
+      PGRST_DB_POOL_ACQUISITION_TIMEOUT: 10
+      PGRST_SERVER_CORS_ALLOWED_ORIGINS: "*"
+      PGRST_LOG_LEVEL: ${PGRST_LOG_LEVEL:-info}
+    ports:
+      - "3000:3000"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    restart: unless-stopped
+
+  # MinIO S3-Compatible Storage
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: sobertube_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_DEFAULT_BUCKETS: ${MINIO_DEFAULT_BUCKETS:-sobertube-storage}
+      # Performance optimizations for development
+      MINIO_CACHE_DRIVES: "/tmp/cache"
+      MINIO_CACHE_EXCLUDE: "*.pdf"
+      MINIO_CACHE_QUOTA: 80
+      MINIO_CACHE_AFTER: 3
+      MINIO_CACHE_WATERMARK_LOW: 70
+      MINIO_CACHE_WATERMARK_HIGH: 90
+    volumes:
+      - minio_data:/data
+      - /tmp/minio-cache:/tmp/cache
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    restart: unless-stopped
+
+  # MinIO Client for bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: sobertube_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    networks:
+      - sobertube_network
+    entrypoint: |
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb myminio/sobertube-storage --ignore-existing;
+      mc anonymous set public myminio/sobertube-storage;
+      echo 'MinIO buckets initialized successfully';
+      "
+
+  # Supabase Storage API
+  storage:
+    image: supabase/storage-api:v0.46.4
+    container_name: sobertube_storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+    environment:
+      ANON_KEY: ${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
+      SERVICE_KEY: ${SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_key_here}
+      DATABASE_URL: postgresql://supabase_admin:${POSTGRES_PASSWORD:-your_super_secure_postgres_password}@postgres:5432/postgres
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: s3
+      GLOBAL_S3_BUCKET: sobertube-storage
+      REGION: us-east-1
+      GLOBAL_S3_ENDPOINT: http://minio:9000
+      GLOBAL_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      GLOBAL_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      GLOBAL_S3_FORCE_PATH_STYLE: true
+      ENABLE_IMAGE_TRANSFORMATION: true
+      IMGPROXY_URL: http://imgproxy:8080
+      # Performance and development settings
+      REQUEST_ID_HEADER: X-Request-ID
+      LOG_LEVEL: ${STORAGE_LOG_LEVEL:-info}
+      DB_INSTALL_ROLES: false
+    ports:
+      - "5000:5000"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost:5000/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    restart: unless-stopped
+
+  # Image Processing Service
+  imgproxy:
+    image: darthsim/imgproxy:v3.21
+    container_name: sobertube_imgproxy
+    environment:
+      IMGPROXY_BIND: 0.0.0.0:8080
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: true
+      IMGPROXY_ENABLE_WEBP_DETECTION: true
+      IMGPROXY_ENABLE_CLIENT_HINTS: true
+      IMGPROXY_MAX_SRC_RESOLUTION: 16.8
+      IMGPROXY_JPEG_PROGRESSIVE: true
+      IMGPROXY_PNG_INTERLACED: true
+      IMGPROXY_QUALITY: 80
+      IMGPROXY_GZIP_COMPRESSION: 1
+      # Development optimizations
+      IMGPROXY_DEVELOPMENT_ERRORS_MODE: true
+      IMGPROXY_LOG_LEVEL: ${IMGPROXY_LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    restart: unless-stopped
+
+  # Deno Edge Functions Runtime
+  edge-functions:
+    image: supabase/edge-runtime:v1.45.2
+    container_name: sobertube_edge_functions
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:-http://localhost:8000}
+      SUPABASE_ANON_KEY: ${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
+      VERIFY_JWT: false
+      FUNCTIONS_VERIFY: false
+    volumes:
+      - ./supabase/functions:/home/deno/functions:ro
+      - ./supabase/functions/_shared:/home/deno/functions/_shared:ro
+    ports:
+      - "54330:9000"
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Local SMTP Server for Development
+  inbucket:
+    image: inbucket/inbucket:3.0.3
+    container_name: sobertube_inbucket
+    environment:
+      INBUCKET_WEB_ADDR: 0.0.0.0:9110
+      INBUCKET_SMTP_ADDR: 0.0.0.0:2500
+      INBUCKET_POP3_ADDR: 0.0.0.0:1100
+    ports:
+      - "2500:2500"  # SMTP
+      - "9110:9110"  # Web UI
+      - "1100:1100"  # POP3
+    networks:
+      - sobertube_network
+    restart: unless-stopped
+
+  # Redis for Caching and Sessions
+  redis:
+    image: redis:7.2-alpine
+    container_name: sobertube_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-sobertube_redis_password} --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-sobertube_redis_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-sobertube_redis_password}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.05'
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy and CDN Simulation
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: sobertube_nginx
+    depends_on:
+      rest:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+      edge-functions:
+        condition: service_healthy
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "80:80"      # HTTP (redirects to HTTPS)
+      - "443:443"    # HTTPS Frontend
+      - "8000:8000"  # HTTPS API Gateway
+      - "8080:8080"  # HTTP API Gateway (development)
+    networks:
+      - sobertube_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-m", "3", "http://localhost/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.2'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+    restart: unless-stopped
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: sobertube_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - sobertube_network
+    restart: unless-stopped
+
+  # Grafana for Metrics Visualization
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: sobertube_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3001:3000"
+    networks:
+      - sobertube_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  sobertube_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.0.0/24

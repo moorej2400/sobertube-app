@@ -8,6 +8,7 @@ import { getSupabaseClient } from '../services/supabase';
 import { logger } from '../utils/logger';
 import { asyncErrorHandler } from '../middleware/errorHandler';
 import { Post, CreatePostRequest, UpdatePostRequest, PostType } from '../types/supabase';
+import { feedUpdatesService } from '../services/feedUpdates';
 
 export const postsController = {
   /**
@@ -101,6 +102,20 @@ export const postsController = {
         contentLength: content.length,
         requestId: req.requestId
       });
+
+      // Send real-time notifications to followers
+      try {
+        const username = req.user.username || 'Unknown User';
+        await feedUpdatesService.notifyFollowersOfNewPost(post, username);
+      } catch (feedError) {
+        // Log error but don't fail the post creation
+        logger.warn('Failed to send real-time feed notifications', {
+          error: feedError instanceof Error ? feedError.message : 'Unknown error',
+          postId: post.id,
+          userId: req.user.id,
+          requestId: req.requestId
+        });
+      }
 
       res.status(201).json({
         success: true,

@@ -25,13 +25,12 @@ export default defineConfig(({ command, mode }) => {
       // Environment-specific source map configuration
       sourcemap: isDevelopment,
       // Production optimization
-      minify: isProduction ? 'terser' : false,
+      minify: isProduction ? 'esbuild' : false,
       // Code splitting and chunk size management
       rollupOptions: {
         output: {
           manualChunks: isProduction ? {
-            vendor: ['react', 'react-dom'],
-            utils: ['lodash', 'date-fns']
+            vendor: ['react', 'react-dom']
           } : undefined,
         },
       },

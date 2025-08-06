@@ -1,0 +1,233 @@
+# Docker Compose configuration for WebSocket clustering
+# Deploys multiple WebSocket server instances with Redis for horizontal scaling
+
+version: '3.8'
+
+services:
+  # Redis for WebSocket clustering
+  redis-cluster:
+    image: redis:7-alpine
+    container_name: sobertube-redis-cluster
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --notify-keyspace-events Ex
+    volumes:
+      - redis_cluster_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Load balancer (Nginx)
+  load-balancer:
+    image: nginx:alpine
+    container_name: sobertube-load-balancer
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/cluster-config:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - websocket-server-1
+      - websocket-server-2
+      - websocket-server-3
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # WebSocket Server Instance 1
+  websocket-server-1:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sobertube-ws-server-1
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - SERVER_ID=server-1
+      - REDIS_URL=redis://redis-cluster:6379
+      - ENABLE_CLUSTERING=true
+      - JWT_SECRET=${JWT_SECRET}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - MAX_CONNECTIONS=5000
+    ports:
+      - "3001:3001"
+    depends_on:
+      redis-cluster:
+        condition: service_healthy
+      supabase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # WebSocket Server Instance 2
+  websocket-server-2:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sobertube-ws-server-2
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - SERVER_ID=server-2
+      - REDIS_URL=redis://redis-cluster:6379
+      - ENABLE_CLUSTERING=true
+      - JWT_SECRET=${JWT_SECRET}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - MAX_CONNECTIONS=5000
+    ports:
+      - "3002:3002"
+    depends_on:
+      redis-cluster:
+        condition: service_healthy
+      supabase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # WebSocket Server Instance 3
+  websocket-server-3:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sobertube-ws-server-3
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - SERVER_ID=server-3
+      - REDIS_URL=redis://redis-cluster:6379
+      - ENABLE_CLUSTERING=true
+      - JWT_SECRET=${JWT_SECRET}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - MAX_CONNECTIONS=5000
+    ports:
+      - "3003:3003"
+    depends_on:
+      redis-cluster:
+        condition: service_healthy
+      supabase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Supabase (for development/testing)
+  supabase:
+    image: supabase/postgres:15.1.0.117
+    container_name: sobertube-supabase-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_super_secret_password}
+      POSTGRES_DB: postgres
+    ports:
+      - "54322:5432"
+    volumes:
+      - supabase_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Monitoring with Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sobertube-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  # Grafana for monitoring dashboards (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sobertube-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    profiles:
+      - monitoring
+
+volumes:
+  redis_cluster_data:
+    driver: local
+  supabase_db_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  default:
+    name: sobertube-cluster-network
+    driver: bridge

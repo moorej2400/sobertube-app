@@ -30,7 +30,8 @@ beforeAll(async () => {
                      testFilePath.includes('logging.test') ||
                      testFilePath.includes('error-handling.test') ||
                      testFilePath.includes('health-check.test') ||
-                     testFilePath.includes('server.test');
+                     testFilePath.includes('server.test') ||
+                     testFilePath.includes('websocket-integration-validation.test');
   
   if (!isUnitTest) {
     // Verify test database configuration
